@@ -13,25 +13,29 @@ import caseStudiesRoutes from "./modules/case-studies/caseStudies.routes.js";
 
 const app = express();
 
-
 const allowedOrigins = [
   process.env.CLIENT_URL_ADMIN,
   process.env.CLIENT_URL_MAIN,
   "http://localhost:3000",
   "http://localhost:3001"
-];
+].filter(Boolean); 
 
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin (Postman, mobile apps)
+    console.log("Incoming origin:", origin);
+
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.includes("ngrok-free.dev") ||
+      origin.includes("amplifyapp.com")
+    ) {
       return callback(null, true);
-    } else {
-      console.log("Blocked by CORS:", origin);
-      return callback(new Error("Not allowed by CORS"));
     }
+
+    console.log("Blocked by CORS:", origin);
+    return callback(new Error("Not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],

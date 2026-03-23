@@ -18,7 +18,7 @@ export const loginAdmin = async (req, res) => {
           secret: process.env.TURNSTILE_SECRET,
           response: cfToken,
         }),
-      }
+      },
     );
 
     const captcha = await verify.json();
@@ -40,13 +40,11 @@ export const loginAdmin = async (req, res) => {
     // Set token as httpOnly cookie
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false,       // set true in production (HTTPS)
-      sameSite: "lax",
-      maxAge: 60 * 60 * 1000, // 1 hour
+      secure: true,
+      sameSite: "none",
     });
 
-    res.json({ success: true });
-
+    res.json({ success: true, token, });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Internal server error" });
