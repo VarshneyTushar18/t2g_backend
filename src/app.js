@@ -15,26 +15,24 @@ const app = express();
 
 
 const allowedOrigins = [
+  process.env.CLIENT_URL_ADMIN,
+  process.env.CLIENT_URL_MAIN,
   "http://localhost:3000",
-  process.env.CLIENT_URL
+  "http://localhost:3001"
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
+    // allow requests with no origin (Postman, mobile apps)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS"));
+      console.log("Blocked by CORS:", origin);
+      return callback(new Error("Not allowed by CORS"));
     }
   },
-  credentials: true
-}));
-
-
-
-
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
   methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
