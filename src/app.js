@@ -2,10 +2,10 @@ import express from "express";
 import dotenv from "dotenv";
 dotenv.config();
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import leadRoutes from "./modules/leads/lead.routes.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import portfolioRoutes from "./modules/portfolio/portfolio.routes.js";
-import cookieParser from "cookie-parser";
 import careerRoutes from "./modules/career/career.routes.js";
 import lifeRoutes from "./modules/life/life.routes.js";
 import testimonialRoutes from "./modules/testimonials/testimonial.routes.js";
@@ -13,72 +13,82 @@ import caseStudiesRoutes from "./modules/case-studies/caseStudies.routes.js";
 
 const app = express();
 
+/**
+ * ✅ Allowed Origins
+ */
 const allowedOrigins = [
   process.env.CLIENT_URL_ADMIN,
   process.env.CLIENT_URL_MAIN,
   "http://localhost:3000",
-  "http://localhost:3001"
-].filter(Boolean); 
+  "http://localhost:3001",
+].filter(Boolean);
 
-app.use(cors({
+/**
+ * ✅ CORS Configuration (FIXED)
+ */
+const corsOptions = {
   origin: function (origin, callback) {
     console.log("Incoming origin:", origin);
 
+    // Allow requests with no origin (like Postman, curl, mobile apps)
     if (!origin) return callback(null, true);
 
-    if (
+    const isAllowed =
       allowedOrigins.includes(origin) ||
-      origin.includes("ngrok-free.dev") ||
-      origin.includes("amplifyapp.com")
-    ) {
+      origin.endsWith(".amplifyapp.com") ||
+      origin.includes("ngrok-free.dev");
+
+    if (isAllowed) {
       return callback(null, true);
     }
 
     console.log("Blocked by CORS:", origin);
     return callback(new Error("Not allowed by CORS"));
   },
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // ✅ Added OPTIONS
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true
-}));
+  credentials: true,
+};
 
+/**
+ * ✅ CRITICAL FIXES
+ */
+app.use(cors(corsOptions));
 
-app.use(express.json());        
+// ✅ Handle preflight requests explicitly
+app.options("*", cors(corsOptions));
+
+// ✅ Required when behind proxies (Railway / Cloudflare)
+app.set("trust proxy", 1);
+
+/**
+ * Body parsers
+ */
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Use the portfolio routes
+/**
+ * Routes
+ */
 app.use("/api/portfolio", portfolioRoutes);
-
-
-// Use the lead routes
 app.use("/api/leads", leadRoutes);
-
-// Use the auth routes (for admin login)
 app.use("/api/auth", authRoutes);
-
-// Use the career routes
 app.use("/api/career", careerRoutes);
-
-// Use the life routes
 app.use("/api/life", lifeRoutes);
-
-// Use the testimonial routes
 app.use("/api/testimonials", testimonialRoutes);
-
-// Use the case studies routes
 app.use("/api/case-studies", caseStudiesRoutes);
 
-
-// Serve uploaded resumes statically
+/**
+ * Static files
+ */
 app.use("/uploads", express.static("uploads"));
 
-
-
+/**
+ * Health check
+ */
 app.get("/health", async (req, res) => {
-  res.json({
-    server: "running"
-  });
+  res.json({ server: "running" });
 });
 
 export default app;
