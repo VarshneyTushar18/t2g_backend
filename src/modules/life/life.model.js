@@ -31,7 +31,10 @@ export const getLifeItemById = async (id) => {
 // GET /api/life/categories
 export const getCategories = async () => {
   const [rows] = await pool.query(`
-    SELECT category, category_title, category_img
+    SELECT 
+      category,
+      MIN(category_title) AS category_title,
+      MIN(category_img) AS category_img
     FROM life_gallery
     WHERE is_active = TRUE
     GROUP BY category
