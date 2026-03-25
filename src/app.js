@@ -50,13 +50,8 @@ const corsOptions = {
   credentials: true,
 };
 
-/**
- * ✅ CRITICAL FIXES
- */
 app.use(cors(corsOptions));
-
-// ✅ Handle preflight requests explicitly
-app.options("*", cors(corsOptions));
+app.options("/*", cors(corsOptions));
 
 // ✅ Required when behind proxies (Railway / Cloudflare)
 app.set("trust proxy", 1);
