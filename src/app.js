@@ -51,7 +51,41 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("/*", cors(corsOptions));
+
+// ✅ Universal preflight handler (no path parsing issues)
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    const origin = req.headers.origin;
+
+    const isAllowed =
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      origin.endsWith(".amplifyapp.com") ||
+      origin.endsWith(".ngrok-free.dev");
+
+    if (isAllowed) {
+      if (origin) {
+        res.header("Access-Control-Allow-Origin", origin);
+      }
+
+      res.header(
+        "Access-Control-Allow-Methods",
+        "GET,POST,PUT,DELETE,OPTIONS"
+      );
+      res.header(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization"
+      );
+      res.header("Access-Control-Allow-Credentials", "true");
+
+      return res.sendStatus(200);
+    }
+
+    return res.sendStatus(403);
+  }
+
+  next();
+});
 
 // ✅ Required when behind proxies (Railway / Cloudflare)
 app.set("trust proxy", 1);
