@@ -1,17 +1,19 @@
 import pool from "../../config/db.js";
+import { transporter } from "../../utils/email.service.js";
 
 /**
  * CREATE Lead
  */
 export const createLead = async (req, res) => {
   try {
-    let { name, email, country, phone, message, form_type, source_page } = req.body;
+    let { name, email, country, phone, message, form_type, source_page } =
+      req.body;
 
     // Validation
     if (!name || !email) {
       return res.status(400).json({
         success: false,
-        message: "Name and email are required"
+        message: "Name and email are required",
       });
     }
 
@@ -31,21 +33,51 @@ export const createLead = async (req, res) => {
     `;
 
     const [result] = await pool.execute(query, [
-      name, email, country, phone, message, form_type, source_page
+      name,
+      email,
+      country,
+      phone,
+      message,
+      form_type,
+      source_page,
     ]);
+
+    // ================= EMAIL LOGIC =================
+    try {
+      await transporter.sendMail({
+        from: process.env.TEST_EMAIL, 
+        to: process.env.TEST_EMAILL, 
+        replyTo: email, 
+        subject: `New Lead - ${name}`,
+        html: `
+          <h3>New Lead Received</h3>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Phone:</strong> ${phone || "-"}</p>
+          <p><strong>Country:</strong> ${country || "-"}</p>
+          <p><strong>Message:</strong> ${message || "-"}</p>
+          <p><strong>Source:</strong> ${source_page || "-"}</p>
+
+          <br/>
+          <p><b>Click reply to respond directly to the user.</b></p>
+        `,
+      });
+     console.log("Email sent:", info.messageId);
+} catch (err) {
+  console.error("Email failed:", err);
+}
+    // =============================================
 
     return res.status(201).json({
       success: true,
       id: result.insertId,
-      message: "Lead created"
+      message: "Lead created",
     });
-
   } catch (error) {
     console.error("CREATE ERROR:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
-
 
 /**
  * READ All Leads (Pagination + Sorting)
@@ -62,15 +94,13 @@ export const getLeads = async (req, res) => {
 
     return res.json({
       success: true,
-      data: rows
+      data: rows,
     });
-
   } catch (error) {
     console.error("READ ERROR:", error);
     return res.status(500).json({ success: false });
   }
 };
-
 
 /**
  * READ Single Lead
@@ -85,21 +115,21 @@ export const getLeadById = async (req, res) => {
 
     const [rows] = await pool.execute(
       "SELECT id, name, email, country, phone, message, form_type, source_page FROM leads WHERE id = ?",
-      [id]
+      [id],
     );
 
     if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Lead not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     }
 
     return res.json({ success: true, data: rows[0] });
-
   } catch (error) {
     console.error("GET BY ID ERROR:", error);
     return res.status(500).json({ success: false });
   }
 };
-
 
 /**
  * UPDATE Lead
@@ -112,7 +142,8 @@ export const updateLead = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid ID" });
     }
 
-    let { name, email, country, phone, message, form_type, source_page } = req.body;
+    let { name, email, country, phone, message, form_type, source_page } =
+      req.body;
 
     // Optional validation (only update if provided)
     const fields = [];
@@ -156,7 +187,7 @@ export const updateLead = async (req, res) => {
     if (fields.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "No fields to update"
+        message: "No fields to update",
       });
     }
 
@@ -171,17 +202,17 @@ export const updateLead = async (req, res) => {
     const [result] = await pool.execute(query, values);
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Lead not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     }
 
     return res.json({ success: true, message: "Lead updated" });
-
   } catch (error) {
     console.error("UPDATE ERROR:", error);
     return res.status(500).json({ success: false });
   }
 };
-
 
 /**
  * DELETE Lead
@@ -194,17 +225,15 @@ export const deleteLead = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid ID" });
     }
 
-    const [result] = await pool.execute(
-      "DELETE FROM leads WHERE id = ?",
-      [id]
-    );
+    const [result] = await pool.execute("DELETE FROM leads WHERE id = ?", [id]);
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Lead not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     }
 
     return res.json({ success: true, message: "Lead deleted" });
-
   } catch (error) {
     console.error("DELETE ERROR:", error);
     return res.status(500).json({ success: false });
