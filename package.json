@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "test:mail": "node src/utils/testingmail.js"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +25,7 @@
     "multer-storage-cloudinary": "^4.0.0",
     "mysql2": "^3.19.1",
     "nodemailer": "^8.0.2",
+    "sib-api-v3-sdk": "^8.5.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

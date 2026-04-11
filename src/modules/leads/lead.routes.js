@@ -1,17 +1,30 @@
 import express from "express";
-import { CreatedLead , getLeads} from "../leads/lead.controller.js";
+import {
+    createLead,
+    getLeads,
+    getLeadById,
+    updateLead,
+    deleteLead
+} from "../leads/lead.controller.js";
+
 import { validateLead } from "../../middleware/validation.js";
 import { verifyAdmin } from "../auth/auth.middleware.js";
 
 const router = express.Router();
 
-// Create a new lead
-router.post("/",validateLead, CreatedLead);  
+// CREATE
+router.post("/", validateLead, createLead);
 
-// Get all leads
-router.get("/", verifyAdmin,getLeads);
+// READ ALL
+router.get("/", verifyAdmin, getLeads);
 
-  
+// READ SINGLE
+router.get("/:id", verifyAdmin, getLeadById);
 
+// UPDATE
+router.put("/:id", verifyAdmin, updateLead);
+
+// DELETE
+router.delete("/:id", verifyAdmin, deleteLead);
 
 export default router;
