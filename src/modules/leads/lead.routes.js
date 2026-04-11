@@ -3,7 +3,6 @@ import {
     createLead,
     getLeads,
     getLeadById,
-    updateLead,
     deleteLead
 } from "../leads/lead.controller.js";
 
@@ -21,8 +20,6 @@ router.get("/", verifyAdmin, getLeads);
 // READ SINGLE
 router.get("/:id", verifyAdmin, getLeadById);
 
-// UPDATE
-router.put("/:id", verifyAdmin, updateLead);
 
 // DELETE
 router.delete("/:id", verifyAdmin, deleteLead);
