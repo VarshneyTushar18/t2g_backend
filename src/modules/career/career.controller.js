@@ -1,6 +1,11 @@
 import * as CareerModel from "./career.model.js";
 import { transporter } from "../../utils/email.service.js";
 
+// ================= HR EMAIL LIST =================
+
+const HR_EMAILS = process.env.OWNER_EMAILS
+  ? process.env.OWNER_EMAILS.split(",").map((e) => e.trim())
+  : [process.env.SMTP_EMAIL];
 
 // PUBLIC CONTROLLERS
 
@@ -107,44 +112,48 @@ export const submitApplication = async (req, res) => {
     );
 
     // ── Send HR Email ─────────────────────────────────
+    // FROM: career@tech2globe.com
+    // TO:   career@tech2globe.com, hr@tech2globe.com, rathiishita2004@gmail.com
     try {
       await transporter.sendMail({
-        from: '"Tech2Globe Careers" <career@tech2globe.com>',
-        to: process.env.TEST_EMAIL,
+        from: `"Tech2Globe Careers" <${process.env.SMTP_EMAIL}>`,
+        to: HR_EMAILS.join(","),   // ✅ all 3 HR emails
+        replyTo: email,            // ✅ HR can reply directly to candidate
         subject: `Job Request - ${firstName} ${lastName}`,
         html: `
-      <p>Hello HR Team!</p>
+          <p>Hello HR Team!</p>
 
-      <p>We have received a new job application. Details are as follows:-</p>
+          <p>We have received a new job application. Details are as follows:-</p>
 
-      <p>
-        <strong>Name:</strong> ${firstName} ${lastName}<br>
-        <strong>Email:</strong> ${email}<br>
-        <strong>Contact Number:</strong> ${phone}<br>
-        <strong>Job request for:</strong> ${job.title}<br>
-        <strong>Portfolio:</strong> ${portfolioLink || "-"}<br>
-        <strong>Current CTC:</strong> ${currentCTC || "-"} LPA<br>
-        <strong>Expected CTC:</strong> ${expectedCTC || "-"} LPA<br>
-        <strong>Notice Period:</strong> ${noticePeriod || "-"}<br>
-        <strong>Last Company:</strong> ${lastCompany || "-"}<br>
-        <strong>Available to join:</strong> ${joinDate || "-"}<br>
-        
-        <strong>Resume:</strong> ${
-          resumeDownloadUrl
-            ? `<a href="${resumeDownloadUrl}" target="_blank">Download Resume</a>`
-            : "Not Uploaded"
-        }
-      </p>
-    `,
+          <p>
+            <strong>Name:</strong> ${firstName} ${lastName}<br>
+            <strong>Email:</strong> ${email}<br>
+            <strong>Contact Number:</strong> ${phone}<br>
+            <strong>Job request for:</strong> ${job.title}<br>
+            <strong>Portfolio:</strong> ${portfolioLink || "-"}<br>
+            <strong>Current CTC:</strong> ${currentCTC || "-"} LPA<br>
+            <strong>Expected CTC:</strong> ${expectedCTC || "-"} LPA<br>
+            <strong>Notice Period:</strong> ${noticePeriod || "-"}<br>
+            <strong>Last Company:</strong> ${lastCompany || "-"}<br>
+            <strong>Available to join:</strong> ${joinDate || "-"}<br>
+            <strong>Resume:</strong> ${
+              resumeDownloadUrl
+                ? `<a href="${resumeDownloadUrl}" target="_blank">Download Resume</a>`
+                : "Not Uploaded"
+            }
+          </p>
+        `,
       });
     } catch (mailError) {
       console.error("HR email failed:", mailError);
     }
 
     // ── Send Candidate Confirmation ───────────────────
+    // FROM: career@tech2globe.com
+    // TO:   candidate's email
     try {
       await transporter.sendMail({
-        from: "<career@tech2globe.com>",
+        from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
         to: email,
         subject: "Application Received – Tech2Globe",
         html: `
@@ -155,7 +164,7 @@ export const submitApplication = async (req, res) => {
           Our HR team will review your profile and contact you shortly.<br><br>
 
           Regards,<br>
-          Tech2Globe Team
+          <b>Tech2Globe Team</b>
         `,
       });
     } catch (mailError) {
@@ -182,7 +191,6 @@ export const submitApplication = async (req, res) => {
     });
   }
 };
-
 
 // ADMIN CONTROLLERS
 
@@ -214,9 +222,7 @@ export const createJob = async (req, res) => {
     const { title } = req.body;
     if (!title) return res.status(400).json({ error: "Job title is required" });
     const job = await CareerModel.createJob(req.body);
-    res
-      .status(201)
-      .json({ success: true, data: job, message: "Job created successfully" });
+    res.status(201).json({ success: true, data: job, message: "Job created successfully" });
   } catch (err) {
     console.error("createJob error:", err);
     res.status(500).json({ error: "Failed to create job" });
@@ -294,8 +300,7 @@ export const updateApplicationStatus = async (req, res) => {
       status,
       admin_notes || null,
     );
-    if (!updated)
-      return res.status(404).json({ error: "Application not found" });
+    if (!updated) return res.status(404).json({ error: "Application not found" });
     res.json({
       success: true,
       data: updated,
@@ -307,7 +312,7 @@ export const updateApplicationStatus = async (req, res) => {
   }
 };
 
-// GET /api/career/admin/jobs/:id  (admin - returns active or inactive)
+// GET /api/career/admin/jobs/:id
 export const getJobByIdAdmin = async (req, res) => {
   try {
     const job = await CareerModel.getJobByIdAdmin(req.params.id);
