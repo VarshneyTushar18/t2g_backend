@@ -1,35 +1,30 @@
 import express from "express";
 import * as controller from "./caseStudies.controller.js";
-import { caseStudiesUpload } from "../../config/multer.js";
 
 const router = express.Router();
 
+// ================= PUBLIC =================
 router.get("/", controller.getAll);
-
 router.get("/featured", controller.getFeatured);
 
 // ================= CATEGORIES =================
-router.get("/categories", controller.getCategories); // ✅ ADDED — must be before /:slug
+router.get("/categories", controller.getCategories);
+
+// 🔥 ADD THESE TWO LINES (THIS IS YOUR MISSING PART)
+router.post("/categories", controller.createCategory);
+router.delete("/categories/:id", controller.deleteCategory);
 
 // ================= ADMIN =================
 router.get("/admin", controller.getAllAdmin);
 
 // ================= SINGLE =================
-router.get("/:slug", controller.getBySlug); // ⚠️ always last GET
+router.get("/:slug", controller.getBySlug);
 
 // ================= CREATE =================
-router.post(
-  "/",
-  caseStudiesUpload.single("featured_image"),
-  controller.create,
-);
+router.post("/", controller.create);
 
 // ================= UPDATE =================
-router.put(
-  "/:id",
-  caseStudiesUpload.single("featured_image"),
-  controller.update,
-);
+router.put("/:id", controller.update);
 
 // ================= DELETE =================
 router.delete("/:id", controller.remove);
