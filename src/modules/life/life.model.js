@@ -178,3 +178,34 @@ export const deleteLifeItem = async (id) => {
   await pool.query(`DELETE FROM life_gallery WHERE id = ?`, [id]);
   return true;
 };
+
+
+export const getAllImages = async () => {
+  const [rows] = await pool.query(`
+    SELECT banner, gallery FROM life_gallery WHERE is_active = TRUE
+  `);
+
+  let allImages = [];
+
+  rows.forEach(row => {
+    // banner
+    if (row.banner) {
+      allImages.push(row.banner);
+    }
+
+    // gallery
+    if (row.gallery) {
+      try {
+        const parsed = typeof row.gallery === "string"
+          ? JSON.parse(row.gallery)
+          : row.gallery;
+
+        allImages.push(...parsed);
+      } catch (e) {
+        console.error("Gallery parse error", e);
+      }
+    }
+  });
+
+  return allImages;
+};

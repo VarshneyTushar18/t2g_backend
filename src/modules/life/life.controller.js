@@ -126,20 +126,42 @@ export const createLifeItem = async (req, res) => {
 export const updateLifeItem = async (req, res) => {
   try {
     const {
-      category, category_title,
-      year, description, sort_order, is_active
+      category,
+      category_title,
+      year,
+      description,
+      sort_order,
+      is_active,
     } = req.body;
 
     const existing = await LifeModel.getLifeItemByIdAdmin(req.params.id);
-    if (!existing) return res.status(404).json({ error: "Life item not found" });
+    if (!existing) {
+      return res.status(404).json({ error: "Life item not found" });
+    }
 
-    const banner       = req.files?.banner?.[0]?.path || existing.banner;
-    const galleryFiles  = req.files?.gallery || [];
+    // Banner (keep old if not uploaded)
+    const banner = req.files?.banner?.[0]?.path || existing.banner;
 
-    // If new gallery files uploaded → replace, else keep existing
-    const gallery = galleryFiles.length > 0
-      ? galleryFiles.map(f => f.path)
-      : existing.gallery || [];
+    // New uploaded gallery files
+    const galleryFiles = req.files?.gallery || [];
+    const newGallery = galleryFiles.map((f) => f.path);
+
+    // Parse existing gallery safely
+    let existingGallery = existing.gallery || [];
+
+    if (typeof existingGallery === "string") {
+      try {
+        existingGallery = JSON.parse(existingGallery);
+      } catch (e) {
+        existingGallery = [];
+      }
+    }
+
+    // ✅ APPEND LOGIC (NO OVERWRITE)
+    const gallery =
+      galleryFiles.length > 0
+        ? [...existingGallery, ...newGallery]
+        : existingGallery;
 
     const item = await LifeModel.updateLifeItem(req.params.id, {
       category,
@@ -154,7 +176,6 @@ export const updateLifeItem = async (req, res) => {
     });
 
     res.json({ success: true, data: item });
-
   } catch (err) {
     console.error("updateLifeItem error:", err);
     res.status(500).json({ error: "Failed to update life item" });
@@ -170,5 +191,16 @@ export const deleteLifeItem = async (req, res) => {
   } catch (err) {
     console.error("deleteLifeItem error:", err);
     res.status(500).json({ error: "Failed to delete life item" });
+  }
+};
+
+
+export const getAllImages = async (req, res) => {
+  try {
+    const images = await LifeModel.getAllImages();
+    res.json({ success: true, data: images, total: images.length });
+  } catch (err) {
+    console.error("getAllImages error:", err);
+    res.status(500).json({ error: "Failed to fetch images" });
   }
 };

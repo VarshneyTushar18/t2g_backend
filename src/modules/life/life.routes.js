@@ -73,6 +73,8 @@ router.get(
 //   LifeController.updateLifeItem
 // );
 
+router.get("/images", LifeController.getAllImages);
+
 
 router.post(
   "/admin/items",
