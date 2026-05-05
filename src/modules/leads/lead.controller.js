@@ -2,6 +2,7 @@
 
 import pool from "../../config/db.js";
 import { transporter } from "../../utils/email.service.js";
+import axios from "axios";
 
 // ================= COMMON HELPERS =================
 
@@ -21,10 +22,41 @@ const HR_EMAILS = process.env.OWNER_EMAILS
 
 export const createLead = async (req, res) => {
   try {
+    const { captchaToken } = req.body;
+
+    // ===== CAPTCHA CHECK =====
+    if (!captchaToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Captcha required",
+      });
+    }
+
+    const verifyResponse = await axios.post(
+      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      new URLSearchParams({
+        secret: process.env.TURNSTILE_SECRET_KEY,
+        response: captchaToken,
+        remoteip: req.ip,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      },
+    );
+
+    if (!verifyResponse.data.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Captcha verification failed",
+      });
+    }
+
     let { name, email, country, phone, message, form_type, source_page } =
       req.body;
 
-    // ===== VALIDATION =====
+    // ===== VALIDATION ====
     if (!name || !email) {
       return res.status(400).json({
         success: false,
@@ -117,8 +149,12 @@ export const createLead = async (req, res) => {
           <b>Tech2Globe Team</b>
         `,
       })
-      .then((info) => console.log("User confirmation mail sent:", info.messageId))
-      .catch((err) => console.error("User confirmation mail failed:", err.message));
+      .then((info) =>
+        console.log("User confirmation mail sent:", info.messageId),
+      )
+      .catch((err) =>
+        console.error("User confirmation mail failed:", err.message),
+      );
 
     // ===== RESPONSE =====
     return res.status(201).json({
@@ -205,7 +241,6 @@ export const getLeadById = async (req, res) => {
   }
 };
 
-
 export const deleteLead = async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -223,4 +258,3 @@ export const deleteLead = async (req, res) => {
     return res.status(500).json({ success: false });
   }
 };
-

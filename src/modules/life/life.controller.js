@@ -88,31 +88,80 @@ export const getLifeItemByIdAdmin = async (req, res) => {
   }
 };
 
+// export const createLifeItem = async (req, res) => {
+//   try {
+//     const {
+//       category, category_title,
+//       year, description, sort_order, is_active
+//     } = req.body;
+
+//     const banner      = req.files?.banner?.[0]?.path;
+//     const galleryFiles = req.files?.gallery || [];
+//     const gallery     = galleryFiles.map(f => f.path);
+
+//     if (!banner) {
+//       return res.status(400).json({ error: "Banner image required" });
+//     }
+
+//     const item = await LifeModel.createLifeItem({
+//       category,
+//       category_title,
+//       category_img: banner,
+//       year,
+//       banner,
+//       description,
+//       gallery,               // array of URLs
+//       sort_order:  sort_order || 0,
+//       is_active:   is_active ?? true,
+//     });
+
+//     res.status(201).json({ success: true, data: item });
+
+//   } catch (err) {
+//     console.error("createLifeItem error:", err);
+//     res.status(500).json({ error: "Failed to create gallery item" });
+//   }
+// };
+
 export const createLifeItem = async (req, res) => {
   try {
     const {
-      category, category_title,
-      year, description, sort_order, is_active
+      category,
+      category_title,
+      year,
+      description,
+      sort_order,
+      is_active,
     } = req.body;
 
-    const banner      = req.files?.banner?.[0]?.path;
-    const galleryFiles = req.files?.gallery || [];
-    const gallery     = galleryFiles.map(f => f.path);
+    const files = req.files || [];
 
-    if (!banner) {
+    // ✅ Banner (works with .any())
+    const bannerFile = files.find(f => f.fieldname === "banner");
+
+    if (!bannerFile) {
       return res.status(400).json({ error: "Banner image required" });
     }
+
+    const banner = bannerFile.path;
+
+    // ✅ Gallery (supports BOTH gallery + gallery[])
+    const galleryFiles = files.filter(
+      f => f.fieldname === "gallery" || f.fieldname === "gallery[]"
+    );
+
+    const gallery = galleryFiles.map(f => f.path);
 
     const item = await LifeModel.createLifeItem({
       category,
       category_title,
-      category_img: banner,
+      category_img: banner,   // keep existing logic
       year,
       banner,
       description,
-      gallery,               // array of URLs
-      sort_order:  sort_order || 0,
-      is_active:   is_active ?? true,
+      gallery,
+      sort_order: sort_order || 0,
+      is_active: is_active ?? true,
     });
 
     res.status(201).json({ success: true, data: item });
@@ -139,27 +188,35 @@ export const updateLifeItem = async (req, res) => {
       return res.status(404).json({ error: "Life item not found" });
     }
 
-    // Banner (keep old if not uploaded)
-    const banner = req.files?.banner?.[0]?.path || existing.banner;
+    const files = req.files || [];
 
-    // New uploaded gallery files
-    const galleryFiles = req.files?.gallery || [];
-    const newGallery = galleryFiles.map((f) => f.path);
+    // ✅ Banner (handle from .any())
+    const bannerFile = files.find(f => f.fieldname === "banner");
+    const banner = bannerFile ? bannerFile.path : existing.banner;
 
-    // Parse existing gallery safely
-    let existingGallery = existing.gallery || [];
+    // ✅ Gallery (handle BOTH gallery + gallery[])
+    const galleryFiles = files.filter(
+      f => f.fieldname === "gallery" || f.fieldname === "gallery[]"
+    );
 
-    if (typeof existingGallery === "string") {
+    const newGallery = galleryFiles.map(f => f.path);
+
+    // ✅ Parse existing gallery safely
+    let existingGallery = [];
+
+    if (Array.isArray(existing.gallery)) {
+      existingGallery = existing.gallery;
+    } else if (typeof existing.gallery === "string") {
       try {
-        existingGallery = JSON.parse(existingGallery);
-      } catch (e) {
+        existingGallery = JSON.parse(existing.gallery);
+      } catch {
         existingGallery = [];
       }
     }
 
-    // ✅ APPEND LOGIC (NO OVERWRITE)
+    // ✅ APPEND (NO OVERWRITE)
     const gallery =
-      galleryFiles.length > 0
+      newGallery.length > 0
         ? [...existingGallery, ...newGallery]
         : existingGallery;
 
@@ -176,12 +233,12 @@ export const updateLifeItem = async (req, res) => {
     });
 
     res.json({ success: true, data: item });
+
   } catch (err) {
     console.error("updateLifeItem error:", err);
     res.status(500).json({ error: "Failed to update life item" });
   }
 };
-
 
 export const deleteLifeItem = async (req, res) => {
   try {

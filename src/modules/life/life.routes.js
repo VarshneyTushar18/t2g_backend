@@ -79,20 +79,14 @@ router.get("/images", LifeController.getAllImages);
 router.post(
   "/admin/items",
   verifyAdmin,
-  imageUpload.fields([
-    { name: "banner", maxCount: 1 },
-    { name: "gallery", maxCount: 50 } // ✅ increased
-  ]),
+  imageUpload.any(),
   LifeController.createLifeItem
 );
 
 router.put(
   "/admin/items/:id",
   verifyAdmin,
-  imageUpload.fields([
-    { name: "banner", maxCount: 1 },
-    { name: "gallery", maxCount: 50 } // ✅ increased
-  ]),
+  imageUpload.any(),
   LifeController.updateLifeItem
 );
 
