@@ -53,12 +53,33 @@ router.get(
 // CREATE item WITH image upload
 
 // Change single to array (max 20 images)
+// router.post(
+//   "/admin/items",
+//   verifyAdmin,
+//   imageUpload.fields([
+//     { name: "banner", maxCount: 1 },
+//     { name: "gallery", maxCount: 20 }
+//   ]),
+//   LifeController.createLifeItem
+// );
+
+// router.put(
+//   "/admin/items/:id",
+//   verifyAdmin,
+//   imageUpload.fields([
+//     { name: "banner", maxCount: 1 },
+//     { name: "gallery", maxCount: 20 }
+//   ]),
+//   LifeController.updateLifeItem
+// );
+
+
 router.post(
   "/admin/items",
   verifyAdmin,
   imageUpload.fields([
     { name: "banner", maxCount: 1 },
-    { name: "gallery", maxCount: 20 }
+    { name: "gallery", maxCount: 50 } // ✅ increased
   ]),
   LifeController.createLifeItem
 );
@@ -68,10 +89,11 @@ router.put(
   verifyAdmin,
   imageUpload.fields([
     { name: "banner", maxCount: 1 },
-    { name: "gallery", maxCount: 20 }
+    { name: "gallery", maxCount: 50 } // ✅ increased
   ]),
   LifeController.updateLifeItem
 );
+
 
 // DELETE item
 // /api/life/admin/items/:id
