@@ -175,15 +175,14 @@ export const getLeads = async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 10, 100);
     const offset = (page - 1) * limit;
 
-    const [rows] = await pool.execute(
-      `
-      SELECT id, name, email, country, phone, message, form_type, source_page, created_at
-      FROM leads
-      ORDER BY id DESC
-      LIMIT ? OFFSET ?
-      `,
-      [limit, offset],
-    );
+   const [rows] = await pool.query(
+  `
+  SELECT id, name, email, country, phone, message, form_type, source_page, created_at
+  FROM leads
+  ORDER BY id DESC
+  LIMIT ${Number(limit)} OFFSET ${Number(offset)}
+  `
+);
 
     const [[{ total }]] = await pool.execute(
       `SELECT COUNT(*) as total FROM leads`,
