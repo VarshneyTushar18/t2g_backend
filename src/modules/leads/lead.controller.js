@@ -12,11 +12,9 @@ const validateEmail = (email) => {
 
 const sanitize = (value) => (value ? String(value).trim() : null);
 
-// ================= HR EMAIL LIST =================
+// ================= LEAD EMAIL LIST =================
 
-const HR_EMAILS = process.env.OWNER_EMAILS
-  ? process.env.OWNER_EMAILS.split(",").map((e) => e.trim())
-  : [process.env.SMTP_EMAIL];
+const LEAD_EMAILS = ["info@tech2globe.com", "enquiries@tech2globe.net"];
 
 // ================= CREATE LEAD =================
 
@@ -97,15 +95,13 @@ export const createLead = async (req, res) => {
       [name, email, country, phone, message, form_type, source_page],
     );
 
-    // ================= MAIL 1: TO HR TEAM =================
-    // FROM: career@tech2globe.com
-    // TO:   career@tech2globe.com, hr@tech2globe.com, rathiishita2004@gmail.com
-    // replyTo: user's email so HR can reply directly to user
+    // ================= MAIL 1: TO LEAD TEAM =================
+    // replyTo: user's email so team can reply directly to user
 
     transporter
       .sendMail({
         from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
-        to: HR_EMAILS.join(","),
+        to: LEAD_EMAILS.join(","),
         replyTo: email,
         subject: `New Lead Inquiry - ${name}`,
         html: `
@@ -125,8 +121,8 @@ export const createLead = async (req, res) => {
           Form Type: ${form_type || "-"}<br>
         `,
       })
-      .then((info) => console.log("HR mail sent:", info.messageId))
-      .catch((err) => console.error("HR mail failed:", err.message));
+      .then((info) => console.log("Lead mail sent:", info.messageId))
+      .catch((err) => console.error("Lead mail failed:", err.message));
 
     // ================= MAIL 2: TO USER (confirmation) =================
     // FROM: career@tech2globe.com
