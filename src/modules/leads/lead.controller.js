@@ -23,6 +23,7 @@ export const createLead = async (req, res) => {
     const { captchaToken } = req.body;
 
     // ===== CAPTCHA CHECK =====
+
     if (!captchaToken) {
       return res.status(400).json({
         success: false,
@@ -54,7 +55,8 @@ export const createLead = async (req, res) => {
     let { name, email, country, phone, message, form_type, source_page } =
       req.body;
 
-    // ===== VALIDATION ====
+    // ===== VALIDATION =====
+
     if (!name || !email) {
       return res.status(400).json({
         success: false,
@@ -77,6 +79,7 @@ export const createLead = async (req, res) => {
     }
 
     // ===== SANITIZATION =====
+
     name = sanitize(name);
     email = sanitize(email)?.toLowerCase();
     country = sanitize(country);
@@ -85,7 +88,32 @@ export const createLead = async (req, res) => {
     form_type = sanitize(form_type);
     source_page = sanitize(source_page);
 
+    // ===== CLIENT IP =====
+
+    const ip =
+      req.headers["cf-connecting-ip"] ||
+      req.headers["x-forwarded-for"]?.split(",")[0] ||
+      req.socket.remoteAddress ||
+      req.ip;
+
+    // ===== LOCATION LOOKUP =====
+
+    let location = "Unknown";
+
+    try {
+      const geoResponse = await axios.get(
+        `https://ipapi.co/${ip}/json/`,
+      );
+
+      const geo = geoResponse.data;
+
+      location = `${geo.city || "-"}, ${geo.region || "-"}, ${geo.country_name || "-"}`;
+    } catch (error) {
+      console.log("Geo lookup failed:", error.message);
+    }
+
     // ===== DB INSERT =====
+
     const [result] = await pool.execute(
       `
       INSERT INTO leads 
@@ -96,7 +124,6 @@ export const createLead = async (req, res) => {
     );
 
     // ================= MAIL 1: TO LEAD TEAM =================
-    // replyTo: user's email so team can reply directly to user
 
     transporter
       .sendMail({
@@ -104,45 +131,122 @@ export const createLead = async (req, res) => {
         to: LEAD_EMAILS.join(","),
         replyTo: email,
         subject: `New Lead Inquiry - ${name}`,
+
         html: `
-          <h3>New Lead Received</h3>
-          <br>
-          <b>Contact Details:</b><br>
-          Name: ${name}<br>
-          Email: ${email}<br>
-          Phone: ${phone || "-"}<br>
-          Country: ${country || "-"}<br><br>
+        <div style="background:#f4f4f4;padding:40px 20px;font-family:Arial,sans-serif;">
 
-          <b>Message:</b><br>
-          ${message || "-"}<br><br>
+          <div style="max-width:700px;margin:auto;background:#ffffff;border-radius:10px;padding:35px;">
 
-          <b>Additional Info:</b><br>
-          Source Page: ${source_page || "-"}<br>
-          Form Type: ${form_type || "-"}<br>
+            <h2 style="margin-top:0;color:#111;">
+              New Lead Inquiry
+            </h2>
+
+            <hr style="border:none;border-top:1px solid #e5e5e5;margin:20px 0;" />
+
+            <h3 style="margin-bottom:15px;color:#222;">
+              Contact Details
+            </h3>
+
+            <p><strong>Name:</strong> ${name}</p>
+
+            <p>
+              <strong>Email:</strong>
+              <a href="mailto:${email}">
+                ${email}
+              </a>
+            </p>
+
+            <p><strong>Phone:</strong> ${phone || "-"}</p>
+
+            <p><strong>Country:</strong> ${country || "-"}</p>
+
+            <p><strong>Location:</strong> ${location}</p>
+
+            <p><strong>Sender IP:</strong> ${ip}</p>
+
+            <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
+
+            <h3 style="margin-bottom:15px;color:#222;">
+              Message
+            </h3>
+
+            <p style="line-height:1.7;">
+              ${message || "-"}
+            </p>
+
+            <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
+
+            <h3 style="margin-bottom:15px;color:#222;">
+              Additional Information
+            </h3>
+
+            <p>
+              <strong>Source Page:</strong>
+              <a href="${source_page}">
+                ${source_page || "-"}
+              </a>
+            </p>
+
+            <p><strong>Form Type:</strong> ${form_type || "-"}</p>
+
+            <p><strong>Submitted At:</strong> ${new Date().toLocaleString()}</p>
+
+          </div>
+
+        </div>
         `,
       })
       .then((info) => console.log("Lead mail sent:", info.messageId))
       .catch((err) => console.error("Lead mail failed:", err.message));
 
-    // ================= MAIL 2: TO USER (confirmation) =================
-    // FROM: career@tech2globe.com
-    // TO:   user's submitted email
+    // ================= MAIL 2: TO USER =================
 
     transporter
       .sendMail({
         from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
         to: email,
         subject: "Thank You for Contacting Tech2Globe",
+
         html: `
-          Dear ${name},<br><br>
-          Thank you for reaching out to us.<br>
-          We have received your inquiry and our team will get back to you shortly.<br><br>
-          <b>Your Submitted Details:</b><br>
-          Name: ${name}<br>
-          Phone: ${phone || "-"}<br>
-          Country: ${country || "-"}<br>
-          Regards,<br>
-          <b>Tech2Globe Team</b>
+        <div style="background:#f4f4f4;padding:40px 20px;font-family:Arial,sans-serif;">
+
+          <div style="max-width:650px;margin:auto;background:#ffffff;border-radius:10px;padding:35px;">
+
+            <h2 style="margin-top:0;color:#111;">
+              Thank You for Contacting Us
+            </h2>
+
+            <p>
+              Dear ${name},
+            </p>
+
+            <p style="line-height:1.7;">
+              Thank you for reaching out to Tech2Globe.
+              We have received your inquiry successfully and our team will contact you shortly.
+            </p>
+
+            <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
+
+            <h3>Your Submitted Details</h3>
+
+            <p><strong>Name:</strong> ${name}</p>
+
+            <p><strong>Email:</strong> ${email}</p>
+
+            <p><strong>Phone:</strong> ${phone || "-"}</p>
+
+            <p><strong>Country:</strong> ${country || "-"}</p>
+
+            <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
+
+            <p>
+              Regards,<br />
+              <strong>Tech2Globe Team</strong>
+            </p>
+
+          </div>
+
+        </div>
         `,
       })
       .then((info) =>
@@ -153,13 +257,16 @@ export const createLead = async (req, res) => {
       );
 
     // ===== RESPONSE =====
+
     return res.status(201).json({
       success: true,
       id: result.insertId,
       message: "Lead created successfully",
     });
+
   } catch (error) {
     console.error("CREATE ERROR:", error.message);
+
     return res.status(500).json({
       success: false,
       message: "Internal server error",
