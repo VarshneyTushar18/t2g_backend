@@ -1,7 +1,12 @@
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config({
+  path: "../../.env",
+});
+
+console.log("SMTP_HOST:", process.env.SMTP_HOST);
+console.log("SMTP_PORT:", process.env.SMTP_PORT);
 
 async function sendTestMail() {
   try {
@@ -30,9 +35,5 @@ async function sendTestMail() {
     console.error("Error:", error);
   }
 }
-
-
-console.log("SMTP_HOST:", process.env.SMTP_HOST);
-console.log("SMTP_PORT:", process.env.SMTP_PORT);
 
 sendTestMail();
