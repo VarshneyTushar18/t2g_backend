@@ -74,6 +74,26 @@ export const imageUpload = multer({
 });
 
 /* ===============================
+   LIFE GALLERY (BULK / FOLDER)
+================================ */
+
+/** Max gallery images per request (+1 slot for banner on create/update). */
+export const LIFE_GALLERY_MAX_FILES = 150;
+const LIFE_GALLERY_FILE_SIZE = 5 * 1024 * 1024; // 5MB per image (before compression)
+
+const lifeGalleryMemoryStorage = multer.memoryStorage();
+
+/** Life uploads: memory → compress (sharp) → Cloudinary in middleware. */
+export const lifeGalleryUpload = multer({
+  storage: lifeGalleryMemoryStorage,
+  fileFilter: imageFilter,
+  limits: {
+    fileSize: LIFE_GALLERY_FILE_SIZE,
+    files: LIFE_GALLERY_MAX_FILES + 1,
+  },
+});
+
+/* ===============================
    TESTIMONIAL STORAGE
 ================================ */
 

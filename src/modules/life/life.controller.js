@@ -1,4 +1,6 @@
 import * as LifeModel from "./life.model.js";
+import { getGalleryFiles } from "./life.upload.js";
+import { parseCurrentGallery, withGalleryMeta } from "./life.helpers.js";
 
 /*
 PUBLIC CONTROLLERS
@@ -69,7 +71,11 @@ ADMIN CONTROLLERS
 export const getAllLifeItemsAdmin = async (req, res) => {
   try {
     const items = await LifeModel.getAllLifeItemsAdmin();
-    res.json({ success: true, data: items, total: items.length });
+    res.json({
+      success: true,
+      data: items.map(withGalleryMeta),
+      total: items.length,
+    });
   } catch (err) {
     console.error("getAllLifeItemsAdmin error:", err);
     res.status(500).json({ error: "Failed to fetch life items" });
@@ -81,7 +87,7 @@ export const getLifeItemByIdAdmin = async (req, res) => {
   try {
     const item = await LifeModel.getLifeItemByIdAdmin(req.params.id);
     if (!item) return res.status(404).json({ error: "Life item not found" });
-    res.json({ success: true, data: item });
+    res.json({ success: true, data: withGalleryMeta(item) });
   } catch (err) {
     console.error("getLifeItemByIdAdmin error:", err);
     res.status(500).json({ error: "Failed to fetch life item" });
@@ -145,12 +151,7 @@ export const createLifeItem = async (req, res) => {
 
     const banner = bannerFile.path;
 
-    // ✅ Gallery (supports BOTH gallery + gallery[])
-    const galleryFiles = files.filter(
-      f => f.fieldname === "gallery" || f.fieldname === "gallery[]"
-    );
-
-    const gallery = galleryFiles.map(f => f.path);
+    const gallery = getGalleryFiles(files).map((f) => f.path);
 
     const item = await LifeModel.createLifeItem({
       category,
@@ -194,31 +195,16 @@ export const updateLifeItem = async (req, res) => {
     const bannerFile = files.find(f => f.fieldname === "banner");
     const banner = bannerFile ? bannerFile.path : existing.banner;
 
-    // ✅ Gallery (handle BOTH gallery + gallery[])
-    const galleryFiles = files.filter(
-      f => f.fieldname === "gallery" || f.fieldname === "gallery[]"
-    );
+    const newGallery = getGalleryFiles(files).map((f) => f.path);
 
-    const newGallery = galleryFiles.map(f => f.path);
+    // Admin sends URLs already saved (shown in UI) so only NEW files are uploaded
+    const fromBody = parseCurrentGallery(req.body.current_gallery);
+    const baseGallery =
+      fromBody ??
+      (Array.isArray(existing.gallery) ? existing.gallery : []);
 
-    // ✅ Parse existing gallery safely
-    let existingGallery = [];
-
-    if (Array.isArray(existing.gallery)) {
-      existingGallery = existing.gallery;
-    } else if (typeof existing.gallery === "string") {
-      try {
-        existingGallery = JSON.parse(existing.gallery);
-      } catch {
-        existingGallery = [];
-      }
-    }
-
-    // ✅ APPEND (NO OVERWRITE)
     const gallery =
-      newGallery.length > 0
-        ? [...existingGallery, ...newGallery]
-        : existingGallery;
+      newGallery.length > 0 ? [...baseGallery, ...newGallery] : baseGallery;
 
     const item = await LifeModel.updateLifeItem(req.params.id, {
       category,
@@ -232,7 +218,7 @@ export const updateLifeItem = async (req, res) => {
       is_active,
     });
 
-    res.json({ success: true, data: item });
+    res.json({ success: true, data: withGalleryMeta(item) });
 
   } catch (err) {
     console.error("updateLifeItem error:", err);
@@ -251,6 +237,80 @@ export const deleteLifeItem = async (req, res) => {
   }
 };
 
+
+// POST /api/life/admin/items/:id/gallery — bulk append (folder / many files)
+export const appendGalleryImages = async (req, res) => {
+  try {
+    const existing = await LifeModel.getLifeItemByIdAdmin(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Life item not found" });
+    }
+
+    const galleryFiles = getGalleryFiles(req.files || []);
+    if (galleryFiles.length === 0) {
+      return res.status(400).json({
+        error: 'At least one image required in the "gallery" field',
+      });
+    }
+
+    const newUrls = galleryFiles.map((f) => f.path);
+    const item = await LifeModel.appendGalleryImages(req.params.id, newUrls);
+
+    res.json({
+      success: true,
+      data: withGalleryMeta(item),
+      uploaded: newUrls.length,
+      galleryTotal: item.gallery.length,
+    });
+  } catch (err) {
+    console.error("appendGalleryImages error:", err);
+    res.status(500).json({ error: "Failed to upload gallery images" });
+  }
+};
+
+// PATCH /api/life/admin/items/:id/gallery — set exact list (remove/reorder, no upload)
+export const setGalleryImages = async (req, res) => {
+  try {
+    const { gallery } = req.body;
+    if (!Array.isArray(gallery)) {
+      return res.status(400).json({
+        error: 'Body must include "gallery" as an array of image URLs',
+      });
+    }
+
+    const item = await LifeModel.setGalleryImages(req.params.id, gallery);
+    if (!item) {
+      return res.status(404).json({ error: "Life item not found" });
+    }
+
+    res.json({ success: true, data: withGalleryMeta(item) });
+  } catch (err) {
+    console.error("setGalleryImages error:", err);
+    res.status(500).json({ error: "Failed to update gallery" });
+  }
+};
+
+// DELETE /api/life/admin/items/:id/gallery — remove URLs from gallery
+export const removeGalleryImages = async (req, res) => {
+  try {
+    const { urls } = req.body;
+    if (!Array.isArray(urls) || urls.length === 0) {
+      return res.status(400).json({
+        error: 'Body must include "urls" as a non-empty array of image URLs',
+      });
+    }
+
+    const item = await LifeModel.removeGalleryImages(req.params.id, urls);
+    if (!item) {
+      return res.status(404).json({ error: "Life item not found" });
+    }
+
+    res.json({ success: true, data: withGalleryMeta(item), removed: urls.length });
+  } catch (err) {
+    console.error("removeGalleryImages error:", err);
+    res.status(500).json({ error: "Failed to remove gallery images" });
+  }
+};
 
 export const getAllImages = async (req, res) => {
   try {

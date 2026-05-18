@@ -1,7 +1,9 @@
 import express from "express";
 import * as LifeController from "../life/life.controller.js";
 import { verifyAdmin } from "../auth/auth.middleware.js";
-import { imageUpload } from "../../config/multer.js";
+import { lifeGalleryUpload } from "../../config/multer.js";
+import { handleLifeGalleryUpload } from "./life.upload.js";
+import { uploadCompressedLifeImages } from "../../middleware/lifeImageUpload.middleware.js";
 
 const router = express.Router();
 
@@ -76,20 +78,46 @@ router.get(
 router.get("/images", LifeController.getAllImages);
 
 
+const lifeUploadPipeline = [
+  handleLifeGalleryUpload(lifeGalleryUpload.any()),
+  uploadCompressedLifeImages,
+];
+
 router.post(
   "/admin/items",
   verifyAdmin,
-  imageUpload.any(),
+  ...lifeUploadPipeline,
   LifeController.createLifeItem
 );
 
 router.put(
   "/admin/items/:id",
   verifyAdmin,
-  imageUpload.any(),
+  ...lifeUploadPipeline,
   LifeController.updateLifeItem
 );
 
+// Add more photos only (does not re-upload existing) — use this for +10 images
+router.post(
+  "/admin/items/:id/gallery",
+  verifyAdmin,
+  ...lifeUploadPipeline,
+  LifeController.appendGalleryImages
+);
+
+// Set gallery to exact URL list (show/delete/reorder without file upload)
+router.patch(
+  "/admin/items/:id/gallery",
+  verifyAdmin,
+  LifeController.setGalleryImages
+);
+
+// Remove specific image URLs from gallery
+router.delete(
+  "/admin/items/:id/gallery",
+  verifyAdmin,
+  LifeController.removeGalleryImages
+);
 
 // DELETE item
 // /api/life/admin/items/:id

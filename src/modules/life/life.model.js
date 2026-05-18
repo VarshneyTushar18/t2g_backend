@@ -179,6 +179,54 @@ export const deleteLifeItem = async (id) => {
   return true;
 };
 
+/** Append URLs to an item's gallery (bulk / folder upload). */
+export const appendGalleryImages = async (id, newUrls) => {
+  const existing = await getLifeItemByIdAdmin(id);
+  if (!existing) return null;
+
+  const gallery = [...(existing.gallery || []), ...newUrls];
+
+  await pool.query(`UPDATE life_gallery SET gallery = ? WHERE id = ?`, [
+    JSON.stringify(gallery),
+    id,
+  ]);
+
+  return getLifeItemByIdAdmin(id);
+};
+
+/** Replace gallery with an exact URL list (delete/reorder without re-upload). */
+export const setGalleryImages = async (id, gallery) => {
+  const existing = await getLifeItemByIdAdmin(id);
+  if (!existing) return null;
+
+  const list = Array.isArray(gallery) ? gallery : [];
+
+  await pool.query(`UPDATE life_gallery SET gallery = ? WHERE id = ?`, [
+    JSON.stringify(list),
+    id,
+  ]);
+
+  return getLifeItemByIdAdmin(id);
+};
+
+/** Remove specific URLs from the gallery. */
+export const removeGalleryImages = async (id, urlsToRemove) => {
+  const existing = await getLifeItemByIdAdmin(id);
+  if (!existing) return null;
+
+  const remove = new Set(
+    (Array.isArray(urlsToRemove) ? urlsToRemove : []).filter(Boolean),
+  );
+  const gallery = (existing.gallery || []).filter((url) => !remove.has(url));
+
+  await pool.query(`UPDATE life_gallery SET gallery = ? WHERE id = ?`, [
+    JSON.stringify(gallery),
+    id,
+  ]);
+
+  return getLifeItemByIdAdmin(id);
+};
+
 
 export const getAllImages = async () => {
   const [rows] = await pool.query(`
