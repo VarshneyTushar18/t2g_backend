@@ -315,7 +315,15 @@ export const removeGalleryImages = async (req, res) => {
 export const getAllImages = async (req, res) => {
   try {
     const images = await LifeModel.getAllImages();
-    res.json({ success: true, data: images, total: images.length });
+    const seen = new Set();
+    const unique = [];
+    for (const u of images) {
+      if (u && typeof u === "string" && !seen.has(u)) {
+        seen.add(u);
+        unique.push(u);
+      }
+    }
+    res.json({ success: true, data: unique, total: unique.length });
   } catch (err) {
     console.error("getAllImages error:", err);
     res.status(500).json({ error: "Failed to fetch images" });

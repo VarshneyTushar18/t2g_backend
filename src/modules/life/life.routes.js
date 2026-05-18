@@ -44,6 +44,13 @@ router.get(
   LifeController.getAllLifeItemsAdmin
 );
 
+// GET every banner + gallery image URL (must be before /admin/items/:id)
+router.get(
+  "/admin/images",
+  verifyAdmin,
+  LifeController.getAllImages,
+);
+
 // GET single item
 // /api/life/admin/items/:id
 router.get(
@@ -74,8 +81,6 @@ router.get(
 //   ]),
 //   LifeController.updateLifeItem
 // );
-
-router.get("/images", LifeController.getAllImages);
 
 
 const lifeUploadPipeline = [

@@ -230,7 +230,7 @@ export const removeGalleryImages = async (id, urlsToRemove) => {
 
 export const getAllImages = async () => {
   const [rows] = await pool.query(`
-    SELECT banner, gallery FROM life_gallery WHERE is_active = TRUE
+    SELECT banner, gallery FROM life_gallery
   `);
 
   let allImages = [];
