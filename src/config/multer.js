@@ -1,6 +1,7 @@
 import multer from "multer";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./cloudinary.js";
+import path from "node:path";
 
 /* ===============================
    COMMON LIMIT
@@ -14,14 +15,22 @@ const FILE_LIMIT = 2 * 1024 * 1024; // 2MB
 
 const resumeStorage = new CloudinaryStorage({
   cloudinary,
-  params: async (req, file) => ({
-    folder: "tech2globe/resumes",
-    resource_type: "auto", // important for non-image files
-    public_id: Date.now() + "-" + file.originalname
-  .replace(/\.[^/.]+$/, "") // remove extension
-  .replace(/\s+/g, "_")
-  .replace(/[^\w.-]/g, "")
-  }),
+  params: async (req, file) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const base = path
+      .basename(file.originalname || "resume", ext)
+      .replace(/\s+/g, "_")
+      .replace(/[^\w.-]/g, "");
+    const safeExt = [".pdf", ".doc", ".docx"].includes(ext) ? ext : "";
+
+    return {
+      folder: "tech2globe/resumes",
+      // Force raw so resume URLs are stable and downloadable.
+      resource_type: "raw",
+      // Keep extension so downloaded filename remains .pdf/.doc/.docx.
+      public_id: `${Date.now()}-${base}${safeExt}`,
+    };
+  },
 });
 
 const resumeFilter = (req, file, cb) => {

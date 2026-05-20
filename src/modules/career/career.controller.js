@@ -5,7 +5,9 @@ import { transporter } from "../../utils/email.service.js";
 
 const HR_EMAILS = process.env.OWNER_EMAILS
   ? process.env.OWNER_EMAILS.split(",").map((e) => e.trim())
-  : [process.env.SMTP_EMAIL];
+  : [(process.env.SMTP_EMAIL || process.env.EMAIL_USER || "").trim()].filter(Boolean);
+
+const MAIL_FROM = (process.env.SMTP_EMAIL || process.env.EMAIL_USER || "").trim();
 
 // PUBLIC CONTROLLERS
 
@@ -86,9 +88,8 @@ export const submitApplication = async (req, res) => {
     // ── Resume Path (Cloudinary URL) ──────────────────
     const resumePath = req.file ? req.file.path : null;
 
-    const resumeDownloadUrl = resumePath
-      ? resumePath.replace("/image/upload/", "/raw/upload/")
-      : null;
+    // Use Cloudinary URL as returned by uploader; converting image/raw can break links.
+    const resumeDownloadUrl = resumePath || null;
 
     // ── Save application ──────────────────────────────
     const appId = await CareerModel.createApplication(
@@ -116,7 +117,7 @@ export const submitApplication = async (req, res) => {
     // TO:   career@tech2globe.com, hr@tech2globe.com, rathiishita2004@gmail.com
     try {
       await transporter.sendMail({
-        from: `"Tech2Globe Careers" <${process.env.SMTP_EMAIL}>`,
+        from: `"Tech2Globe Careers" <${MAIL_FROM}>`,
         to: HR_EMAILS.join(","),   // ✅ all 3 HR emails
         replyTo: email,            // ✅ HR can reply directly to candidate
         subject: `Job Request - ${firstName} ${lastName}`,
@@ -153,7 +154,7 @@ export const submitApplication = async (req, res) => {
     // TO:   candidate's email
     try {
       await transporter.sendMail({
-        from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
+        from: `"Tech2Globe" <${MAIL_FROM}>`,
         to: email,
         subject: "Application Received – Tech2Globe",
         html: `
