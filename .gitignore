@@ -1,3 +1,9 @@
 node_modules/
 .env
-echo "uploads/resumes/" >> .gitignore"uploads/resumes/" 
+
+# Local Life @ T2G image backups (mirrors Cloudinary uploads)
+uploads/life-gallery/**
+!uploads/life-gallery/.gitkeep
+
+# Other uploads
+uploads/resumes/

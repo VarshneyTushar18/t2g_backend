@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import cloudinary from "../config/cloudinary.js";
 import { compressLifeImage } from "../utils/imageCompression.js";
+import { backupLifeImage } from "../utils/lifeLocalBackup.js";
 
 const LIFE_FOLDER = "tech2globe/life-gallery";
 
@@ -40,6 +41,16 @@ export const uploadCompressedLifeImages = async (req, res, next) => {
       file.path = result.secure_url;
       file.filename = result.public_id;
       file.size = buffer.length;
+
+      await backupLifeImage({
+        buffer,
+        format,
+        fieldname: file.fieldname,
+        originalname: file.originalname,
+        cloudinaryUrl: result.secure_url,
+        req,
+      });
+
       delete file.buffer;
     }
 
