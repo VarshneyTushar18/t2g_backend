@@ -1,8 +1,8 @@
 import express from "express";
 import * as LifeController from "../life/life.controller.js";
-import { verifyAdmin, requireModule } from "../auth/auth.middleware.js";
+import { guardModule } from "../auth/auth.middleware.js";
 
-const adminLife = [verifyAdmin, requireModule("life")];
+const adminLife = guardModule("life");
 import { lifeGalleryUpload } from "../../config/multer.js";
 import { handleLifeGalleryUpload } from "./life.upload.js";
 import { uploadCompressedLifeImages } from "../../middleware/lifeImageUpload.middleware.js";

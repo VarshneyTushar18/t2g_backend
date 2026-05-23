@@ -274,25 +274,54 @@ export const createLead = async (req, res) => {
   }
 };
 
+// ================= LEAD LIST FILTERS =================
+
+const buildLeadFilters = (query) => {
+  const clauses = [];
+  const params = [];
+
+  const search = sanitize(query.search);
+  if (search) {
+    const like = `%${search}%`;
+    clauses.push(
+      `(name LIKE ? OR email LIKE ? OR phone LIKE ? OR message LIKE ? OR country LIKE ? OR source_page LIKE ? OR form_type LIKE ?)`,
+    );
+    params.push(like, like, like, like, like, like, like);
+  }
+
+  const formType = sanitize(query.form_type);
+  if (formType) {
+    clauses.push(`form_type = ?`);
+    params.push(formType);
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  return { where, params };
+};
+
 // ================= GET ALL LEADS =================
 
 export const getLeads = async (req, res) => {
   try {
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(parseInt(req.query.limit) || 10, 100);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
     const offset = (page - 1) * limit;
+    const { where, params } = buildLeadFilters(req.query);
 
-   const [rows] = await pool.query(
-  `
-  SELECT id, name, email, country, phone, message, form_type, source_page, created_at
-  FROM leads
-  ORDER BY id DESC
-  LIMIT ${Number(limit)} OFFSET ${Number(offset)}
-  `
-);
+    const [rows] = await pool.query(
+      `
+      SELECT id, name, email, country, phone, message, form_type, source_page, created_at
+      FROM leads
+      ${where}
+      ORDER BY id DESC
+      LIMIT ? OFFSET ?
+      `,
+      [...params, limit, offset],
+    );
 
-    const [[{ total }]] = await pool.execute(
-      `SELECT COUNT(*) as total FROM leads`,
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) as total FROM leads ${where}`,
+      params,
     );
 
     return res.json({
@@ -302,12 +331,82 @@ export const getLeads = async (req, res) => {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     });
   } catch (error) {
     console.error("READ ERROR:", error.message);
-    return res.status(500).json({ success: false });
+    return res.status(500).json({ success: false, message: "Failed to load leads" });
+  }
+};
+
+// ================= EXPORT LEADS (CSV) =================
+
+const csvEscape = (value) => {
+  const s = value == null ? "" : String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+};
+
+export const exportLeads = async (req, res) => {
+  try {
+    const { where, params } = buildLeadFilters(req.query);
+    const maxRows = 10000;
+
+    const [rows] = await pool.query(
+      `
+      SELECT id, name, email, country, phone, message, form_type, source_page, created_at
+      FROM leads
+      ${where}
+      ORDER BY id DESC
+      LIMIT ?
+      `,
+      [...params, maxRows],
+    );
+
+    const headers = [
+      "ID",
+      "Name",
+      "Email",
+      "Country",
+      "Phone",
+      "Message",
+      "Form Type",
+      "Source Page",
+      "Created At",
+    ];
+
+    const lines = [
+      headers.join(","),
+      ...rows.map((r) =>
+        [
+          r.id,
+          r.name,
+          r.email,
+          r.country,
+          r.phone,
+          r.message,
+          r.form_type,
+          r.source_page,
+          r.created_at,
+        ]
+          .map(csvEscape)
+          .join(","),
+      ),
+    ];
+
+    const csv = `\uFEFF${lines.join("\n")}`;
+    const stamp = new Date().toISOString().slice(0, 10);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="leads-export-${stamp}.csv"`,
+    );
+    return res.send(csv);
+  } catch (error) {
+    console.error("EXPORT ERROR:", error.message);
+    return res.status(500).json({ success: false, message: "Export failed" });
   }
 };
 

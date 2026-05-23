@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { ROLE_MODULES, SUPER_ADMIN_ROLE } from "./auth.constants.js";
+import { canPerform, httpMethodToAction } from "./modulePermissions.js";
 
 const cookieOptions = {
   httpOnly: true,
@@ -51,3 +52,29 @@ export const requireModule =
     }
     next();
   };
+
+/** Enforce view / add / edit / delete from JWT permissions (GET→view, POST→add, …) */
+export const enforceModulePermission =
+  (moduleKey) =>
+  (req, res, next) => {
+    if (isSuperAdminUser(req.user)) return next();
+
+    let permissions = req.user?.permissions;
+    if (!permissions || !Object.keys(permissions).length) {
+      return next();
+    }
+
+    const action = httpMethodToAction(req.method);
+    if (!canPerform(permissions, moduleKey, action)) {
+      return res.status(403).json({
+        message: `You do not have ${action} access for this module`,
+      });
+    }
+    next();
+  };
+
+export const guardModule = (moduleKey) => [
+  verifyAdmin,
+  requireModule(moduleKey),
+  enforceModulePermission(moduleKey),
+];

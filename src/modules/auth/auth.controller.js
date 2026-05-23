@@ -2,6 +2,10 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { cookieOptions } from "./auth.middleware.js";
 import { ADMIN_MODULES, SUPER_ADMIN_ROLE } from "./auth.constants.js";
+import {
+  moduleKeysFromList,
+  normalizeModuleList,
+} from "./modulePermissions.js";
 import * as UserModel from "./user.model.js";
 
 const signToken = (payload) =>
@@ -43,11 +47,21 @@ export const loginAdmin = async (req, res) => {
       password === process.env.ADMIN_PASSWORD
     ) {
       // Env super admin (no DB row) — until you add admin_users manually
+      const full = ADMIN_MODULES.map((key) => ({
+        key,
+        view: true,
+        add: true,
+        edit: true,
+        delete: true,
+      }));
       authUser = {
         id: 0,
         email: normalizedEmail,
         role: SUPER_ADMIN_ROLE,
         modules: [...ADMIN_MODULES],
+        permissions: Object.fromEntries(
+          full.map((m) => [m.key, { view: true, add: true, edit: true, delete: true }]),
+        ),
       };
     } else {
       return res.status(401).json({ message: "Invalid credentials" });
@@ -57,6 +71,7 @@ export const loginAdmin = async (req, res) => {
       email: authUser.email,
       role: authUser.role,
       modules: authUser.modules,
+      permissions: authUser.permissions || {},
     });
 
     setAuthCookie(res, token);
@@ -75,13 +90,23 @@ export const logoutAdmin = (req, res) => {
 export const getMe = async (req, res) => {
   try {
     if (req.user.sub === 0) {
+      const modules = req.user.modules || [...ADMIN_MODULES];
+      const permissions =
+        req.user.permissions ||
+        Object.fromEntries(
+          modules.map((key) => [
+            key,
+            { view: true, add: true, edit: true, delete: true },
+          ]),
+        );
       return res.json({
         success: true,
         user: {
           id: 0,
           email: req.user.email,
           role: req.user.role,
-          modules: req.user.modules || [...ADMIN_MODULES],
+          modules,
+          permissions,
         },
       });
     }
@@ -150,7 +175,7 @@ export const listUsers = async (req, res) => {
 
 export const createUser = async (req, res) => {
   try {
-    const { email, password, modules = [] } = req.body;
+    const { email, password, modules = [], moduleAccess } = req.body;
     if (!email || !password) {
       return res.status(400).json({ message: "Email and password are required" });
     }
@@ -163,11 +188,17 @@ export const createUser = async (req, res) => {
       return res.status(409).json({ message: "Email already registered" });
     }
 
-    const validModules = modules.filter((m) => ADMIN_MODULES.includes(m));
-    if (validModules.length === 0) {
-      return res.status(400).json({ message: "Select at least one module" });
+    const normalized = normalizeModuleList(moduleAccess ?? modules);
+    if (normalized.length === 0) {
+      return res.status(400).json({ message: "Select at least one module with permissions" });
     }
-    const created = await UserModel.createStaffUser(email, password, validModules);
+    const created = await UserModel.createStaffUser(
+      email,
+      password,
+      moduleKeysFromList(normalized),
+      null,
+      normalized,
+    );
     const authUser = await UserModel.buildAuthPayload(created);
     res.status(201).json({ success: true, user: authUser });
   } catch (err) {
@@ -179,7 +210,7 @@ export const createUser = async (req, res) => {
 export const updateUserModules = async (req, res) => {
   try {
     const userId = Number(req.params.id);
-    const { modules = [] } = req.body;
+    const { modules = [], moduleAccess } = req.body;
 
     const user = await UserModel.findUserById(userId);
     if (!user) {
@@ -189,11 +220,15 @@ export const updateUserModules = async (req, res) => {
       return res.status(400).json({ message: "Cannot change modules for super admin" });
     }
 
-    const validModules = modules.filter((m) => ADMIN_MODULES.includes(m));
-    if (validModules.length === 0) {
-      return res.status(400).json({ message: "Select at least one module" });
+    const normalized = normalizeModuleList(moduleAccess ?? modules);
+    if (normalized.length === 0) {
+      return res.status(400).json({ message: "Select at least one module with permissions" });
     }
-    await UserModel.setUserModules(userId, validModules);
+    await UserModel.setUserModules(
+      userId,
+      moduleKeysFromList(normalized),
+      normalized,
+    );
     const updated = await UserModel.findUserById(userId);
     const authUser = await UserModel.buildAuthPayload(updated);
     res.json({ success: true, user: authUser });

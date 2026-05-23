@@ -4,9 +4,9 @@ import {
   getSubcategories, createSubcategory, updateSubcategory, deleteSubcategory,
   getProjects, createProject, updateProject, deleteProject,
 } from "../portfolio/portfolio.controller.js";
-import { verifyAdmin, requireModule } from "../auth/auth.middleware.js";
+import { guardModule } from "../auth/auth.middleware.js";
 
-const adminPortfolio = [verifyAdmin, requireModule("portfolio")];
+const adminPortfolio = guardModule("portfolio");
 import { imageUpload } from "../../config/multer.js";
 import { getPortfolioTree } from "../portfolio/portfolio.controller.js";
 

@@ -1,8 +1,8 @@
 import express from "express";
 import * as CareerController from "./career.controller.js";
-import { verifyAdmin, requireModule } from "../auth/auth.middleware.js";
+import { guardModule } from "../auth/auth.middleware.js";
 
-const adminCareer = [verifyAdmin, requireModule("career")];
+const adminCareer = guardModule("career");
 import { resumeUpload } from "../../config/multer.js";
 
 const router = express.Router();

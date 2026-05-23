@@ -1,9 +1,9 @@
 import express from "express";
 import * as controller from "./caseStudies.controller.js";
-import { verifyAdmin, requireModule } from "../auth/auth.middleware.js";
+import { guardModule } from "../auth/auth.middleware.js";
 
 const router = express.Router();
-const adminCaseStudies = [verifyAdmin, requireModule("case_studies")];
+const adminCaseStudies = guardModule("case_studies");
 
 // ================= PUBLIC =================
 router.get("/", controller.getAll);
