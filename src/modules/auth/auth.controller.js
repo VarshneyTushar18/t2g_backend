@@ -173,17 +173,46 @@ export const listUsers = async (req, res) => {
   }
 };
 
+export const setUserPassword = async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ message: "New password must be at least 6 characters" });
+    }
+
+    const user = await UserModel.findUserById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    if (user.role === SUPER_ADMIN_ROLE) {
+      return res.status(400).json({
+        message: "Use Change password in profile for super admin account",
+      });
+    }
+
+    await UserModel.updatePassword(userId, newPassword);
+    res.json({ success: true, message: "Password updated" });
+  } catch (err) {
+    console.error("setUserPassword error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 export const createUser = async (req, res) => {
   try {
-    const { email, password, modules = [], moduleAccess } = req.body;
-    if (!email || !password) {
+    const { email, password, modules = [], moduleAccess, fullName } = req.body;
+    const normalizedEmail = (email || "").toLowerCase().trim();
+
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ message: "Email and password are required" });
     }
     if (password.length < 6) {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
 
-    const existing = await UserModel.findUserByEmail(email);
+    const existing = await UserModel.findUserByEmail(normalizedEmail);
     if (existing) {
       return res.status(409).json({ message: "Email already registered" });
     }
@@ -192,18 +221,38 @@ export const createUser = async (req, res) => {
     if (normalized.length === 0) {
       return res.status(400).json({ message: "Select at least one module with permissions" });
     }
+
+    const hasAccess = normalized.some(
+      (m) => m.view || m.add || m.edit || m.delete,
+    );
+    if (!hasAccess) {
+      return res.status(400).json({
+        message: "Enable at least View or Add/Edit on one module",
+      });
+    }
+
     const created = await UserModel.createStaffUser(
-      email,
+      normalizedEmail,
       password,
       moduleKeysFromList(normalized),
-      null,
+      fullName || null,
       normalized,
     );
+    if (!created) {
+      return res.status(500).json({ message: "User was not created" });
+    }
+
     const authUser = await UserModel.buildAuthPayload(created);
-    res.status(201).json({ success: true, user: authUser });
+    res.status(201).json({
+      success: true,
+      user: authUser,
+      message: "User created. They can log in with the email and password you set.",
+    });
   } catch (err) {
     console.error("createUser error:", err);
-    res.status(500).json({ message: "Internal server error" });
+    res.status(500).json({
+      message: err.message || "Failed to create user",
+    });
   }
 };
 

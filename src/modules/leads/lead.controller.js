@@ -295,6 +295,17 @@ const buildLeadFilters = (query) => {
     params.push(formType);
   }
 
+  const dateFrom = sanitize(query.date_from);
+  const dateTo = sanitize(query.date_to);
+  if (dateFrom) {
+    clauses.push(`DATE(created_at) >= ?`);
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    clauses.push(`DATE(created_at) <= ?`);
+    params.push(dateTo);
+  }
+
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   return { where, params };
 };
