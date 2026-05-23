@@ -1,6 +1,8 @@
 import express from "express";
 import * as LifeController from "../life/life.controller.js";
-import { verifyAdmin } from "../auth/auth.middleware.js";
+import { verifyAdmin, requireModule } from "../auth/auth.middleware.js";
+
+const adminLife = [verifyAdmin, requireModule("life")];
 import { lifeGalleryUpload } from "../../config/multer.js";
 import { handleLifeGalleryUpload } from "./life.upload.js";
 import { uploadCompressedLifeImages } from "../../middleware/lifeImageUpload.middleware.js";
@@ -40,14 +42,14 @@ router.get("/gallery/:category/:year", LifeController.getGallery);
 // /api/life/admin/items
 router.get(
   "/admin/items",
-  verifyAdmin,
+  ...adminLife,
   LifeController.getAllLifeItemsAdmin
 );
 
 // GET every banner + gallery image URL (must be before /admin/items/:id)
 router.get(
   "/admin/images",
-  verifyAdmin,
+  ...adminLife,
   LifeController.getAllImages,
 );
 
@@ -55,7 +57,7 @@ router.get(
 // /api/life/admin/items/:id
 router.get(
   "/admin/items/:id",
-  verifyAdmin,
+  ...adminLife,
   LifeController.getLifeItemByIdAdmin
 );
 
@@ -64,7 +66,7 @@ router.get(
 // Change single to array (max 20 images)
 // router.post(
 //   "/admin/items",
-//   verifyAdmin,
+//   ...adminLife,
 //   imageUpload.fields([
 //     { name: "banner", maxCount: 1 },
 //     { name: "gallery", maxCount: 20 }
@@ -74,7 +76,7 @@ router.get(
 
 // router.put(
 //   "/admin/items/:id",
-//   verifyAdmin,
+//   ...adminLife,
 //   imageUpload.fields([
 //     { name: "banner", maxCount: 1 },
 //     { name: "gallery", maxCount: 20 }
@@ -90,14 +92,14 @@ const lifeUploadPipeline = [
 
 router.post(
   "/admin/items",
-  verifyAdmin,
+  ...adminLife,
   ...lifeUploadPipeline,
   LifeController.createLifeItem
 );
 
 router.put(
   "/admin/items/:id",
-  verifyAdmin,
+  ...adminLife,
   ...lifeUploadPipeline,
   LifeController.updateLifeItem
 );
@@ -105,7 +107,7 @@ router.put(
 // Add more photos only (does not re-upload existing) — use this for +10 images
 router.post(
   "/admin/items/:id/gallery",
-  verifyAdmin,
+  ...adminLife,
   ...lifeUploadPipeline,
   LifeController.appendGalleryImages
 );
@@ -113,14 +115,14 @@ router.post(
 // Set gallery to exact URL list (show/delete/reorder without file upload)
 router.patch(
   "/admin/items/:id/gallery",
-  verifyAdmin,
+  ...adminLife,
   LifeController.setGalleryImages
 );
 
 // Remove specific image URLs from gallery
 router.delete(
   "/admin/items/:id/gallery",
-  verifyAdmin,
+  ...adminLife,
   LifeController.removeGalleryImages
 );
 
@@ -128,7 +130,7 @@ router.delete(
 // /api/life/admin/items/:id
 router.delete(
   "/admin/items/:id",
-  verifyAdmin,
+  ...adminLife,
   LifeController.deleteLifeItem
 );
 

@@ -1,32 +1,22 @@
 import express from "express";
 import * as controller from "./caseStudies.controller.js";
+import { verifyAdmin, requireModule } from "../auth/auth.middleware.js";
 
 const router = express.Router();
+const adminCaseStudies = [verifyAdmin, requireModule("case_studies")];
 
 // ================= PUBLIC =================
 router.get("/", controller.getAll);
 router.get("/featured", controller.getFeatured);
-
-// ================= CATEGORIES =================
 router.get("/categories", controller.getCategories);
-
-// 🔥 ADD THESE TWO LINES (THIS IS YOUR MISSING PART)
-router.post("/categories", controller.createCategory);
-router.delete("/categories/:id", controller.deleteCategory);
-
-// ================= ADMIN =================
-router.get("/admin", controller.getAllAdmin);
-
-// ================= SINGLE =================
 router.get("/:slug", controller.getBySlug);
 
-// ================= CREATE =================
-router.post("/", controller.create);
-
-// ================= UPDATE =================
-router.put("/:id", controller.update);
-
-// ================= DELETE =================
-router.delete("/:id", controller.remove);
+// ================= ADMIN =================
+router.get("/admin", ...adminCaseStudies, controller.getAllAdmin);
+router.post("/categories", ...adminCaseStudies, controller.createCategory);
+router.delete("/categories/:id", ...adminCaseStudies, controller.deleteCategory);
+router.post("/", ...adminCaseStudies, controller.create);
+router.put("/:id", ...adminCaseStudies, controller.update);
+router.delete("/:id", ...adminCaseStudies, controller.remove);
 
 export default router;

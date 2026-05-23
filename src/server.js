@@ -2,7 +2,6 @@ import app from "./app.js";
 import dotenv from "dotenv";
 import { testDBConnection } from "./config/db.js";
 
-
 dotenv.config();
 
 // Set the port from environment variable or default to 5000
@@ -12,7 +11,7 @@ const PORT = process.env.PORT || 5000;
 
 
 
-// Test database connection before starting the server  
+// Test database connection before starting the server
 testDBConnection();
 
 
