@@ -2,11 +2,16 @@ import * as model from "../case-studies/caseStudies.model.js";
 
 // ================= FEATURED =================
 export const getFeatured = async (req, res) => {
-  const data = await model.getFeaturedCaseStudies();
-  res.json(data);
+  try {
+    const data = await model.getFeaturedCaseStudies();
+    res.json(data);
+  } catch (err) {
+    console.error("getFeatured error:", err);
+    res.status(500).json({ error: "Failed to fetch featured case studies" });
+  }
 };
 
-// ================= ALL =================
+// ================= ALL (FRONTEND TABS) =================
 export const getAll = async (req, res) => {
   try {
     const rows = await model.getAllCaseStudies();
@@ -22,33 +27,30 @@ export const getAll = async (req, res) => {
 
       if (row.title) {
         grouped[row.category_name].items.push({
-          id: row.id, // ✅ FIXED
+          id: row.id,
           title: row.title,
           description: row.short_description,
-          slug: row.slug, // ✅ FIXED
+          slug: row.slug,
           featured_image: row.featured_image,
         });
       }
     });
 
-    const result = Object.values(grouped);
-
     res.json({
       success: true,
-      data: result,
+      data: Object.values(grouped),
     });
   } catch (err) {
-    console.error("getAll case studies error:", err);
+    console.error("getAll error:", err);
     res.status(500).json({ error: "Failed to fetch case studies" });
   }
 };
-
 
 // ================= ADMIN =================
 export const getAllAdmin = async (req, res) => {
   try {
     const rows = await model.getAllCaseStudiesAdmin();
- 
+
     res.json({
       success: true,
       data: rows,
@@ -58,8 +60,6 @@ export const getAllAdmin = async (req, res) => {
     res.status(500).json({ error: "Failed to fetch admin data" });
   }
 };
-
-
 
 // ================= CATEGORIES =================
 export const getCategories = async (req, res) => {
@@ -72,8 +72,6 @@ export const getCategories = async (req, res) => {
   }
 };
 
-
-
 // ================= SINGLE =================
 export const getBySlug = async (req, res) => {
   try {
@@ -83,7 +81,6 @@ export const getBySlug = async (req, res) => {
       return res.status(404).json({ error: "Not found" });
     }
 
-    // 🔥 PARSE JSON
     if (data.table_data) {
       data.table_data = JSON.parse(data.table_data);
     }
@@ -94,6 +91,7 @@ export const getBySlug = async (req, res) => {
     res.status(500).json({ error: "Failed to fetch case study" });
   }
 };
+
 // ================= CREATE =================
 export const create = async (req, res) => {
   try {
@@ -103,7 +101,7 @@ export const create = async (req, res) => {
       ...req.body,
       featured_image,
       table_data: req.body.table_data
-        ? JSON.parse(req.body.table_data) // 🔥 important
+        ? JSON.parse(req.body.table_data)
         : null,
     });
 
@@ -140,5 +138,38 @@ export const remove = async (req, res) => {
   } catch (err) {
     console.error("Delete error:", err);
     res.status(500).json({ error: "Failed to delete case study" });
+  }
+};
+
+// ================= CREATE CATEGORY =================
+// ================= CREATE CATEGORY =================
+export const createCategory = async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Category name required" });
+    }
+
+    await model.createCategory(name.trim());
+
+    res.json({ success: true, message: "Category created" });
+  } catch (err) {
+    console.error("createCategory error:", err);
+    res.status(500).json({ error: "Failed to create category" });
+  }
+};
+
+// ================= DELETE CATEGORY =================
+export const deleteCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    await model.deleteCategory(id);
+
+    res.json({ success: true, message: "Category deleted" });
+  } catch (err) {
+    console.error("deleteCategory error:", err);
+    res.status(500).json({ error: "Failed to delete category" });
   }
 };

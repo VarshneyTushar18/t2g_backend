@@ -8,23 +8,24 @@ import {
 } from "../leads/lead.controller.js";
 
 import { validateLead } from "../../middleware/validation.js";
-import { verifyAdmin } from "../auth/auth.middleware.js";
+import { guardModule } from "../auth/auth.middleware.js";
 
 const router = express.Router();
+const adminLeads = guardModule("leads");
 
 // CREATE
 router.post("/", validateLead, createLead);
 
 // READ ALL
-router.get("/", verifyAdmin, getLeads);
+router.get("/", ...adminLeads, getLeads);
 
 // EXPORT CSV (must be before /:id)
-router.get("/export", verifyAdmin, exportLeads);
+router.get("/export", ...adminLeads, exportLeads);
 
 // READ SINGLE
-router.get("/:id", verifyAdmin, getLeadById);
+router.get("/:id", ...adminLeads, getLeadById);
 
 // DELETE
-router.delete("/:id", verifyAdmin, deleteLead);
+router.delete("/:id", ...adminLeads, deleteLead);
 
 export default router;

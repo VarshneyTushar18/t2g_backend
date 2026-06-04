@@ -47,7 +47,7 @@ const corsOptions = {
     console.log("Blocked by CORS:", origin);
     return callback(new Error("Not allowed by CORS"));
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // ✅ Added OPTIONS
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
 };
@@ -72,7 +72,7 @@ app.use((req, res, next) => {
 
       res.header(
         "Access-Control-Allow-Methods",
-        "GET,POST,PUT,DELETE,OPTIONS"
+        "GET,POST,PUT,PATCH,DELETE,OPTIONS"
       );
       res.header(
         "Access-Control-Allow-Headers",

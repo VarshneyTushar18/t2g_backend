@@ -4,10 +4,11 @@ import {
   getSubcategories, createSubcategory, updateSubcategory, deleteSubcategory,
   getProjects, createProject, updateProject, deleteProject,
 } from "../portfolio/portfolio.controller.js";
-import { verifyAdmin } from "../auth/auth.middleware.js";
+import { guardModule } from "../auth/auth.middleware.js";
 import { imageUpload } from "../../config/multer.js";
 import { getPortfolioTree } from "../portfolio/portfolio.controller.js";
 
+const adminPortfolio = guardModule("portfolio");
 const router = express.Router();
 
 // Public
@@ -16,33 +17,23 @@ router.get("/subcategories/:categoryId", getSubcategories);
 router.get("/projects/:subcategoryId", getProjects);
 
 // Protected
-router.post("/categories", verifyAdmin, createCategory);
-router.put("/categories/:id", verifyAdmin, updateCategory);
-router.delete("/categories/:id", verifyAdmin, deleteCategory);
+router.post("/categories", ...adminPortfolio, createCategory);
+router.put("/categories/:id", ...adminPortfolio, updateCategory);
+router.delete("/categories/:id", ...adminPortfolio, deleteCategory);
 
-router.post("/subcategories", verifyAdmin, createSubcategory);
-router.put("/subcategories/:id", verifyAdmin, updateSubcategory);
-router.delete("/subcategories/:id", verifyAdmin, deleteSubcategory);
-
+router.post("/subcategories", ...adminPortfolio, createSubcategory);
+router.put("/subcategories/:id", ...adminPortfolio, updateSubcategory);
+router.delete("/subcategories/:id", ...adminPortfolio, deleteSubcategory);
 
 router.post(
   "/projects",
+  ...adminPortfolio,
   imageUpload.single("image"),
-  (req, res, next) => {
-    console.log("BODY:", req.body);
-    console.log("FILE:", req.file);
-    next();
-  },
-  createProject
+  createProject,
 );
-router.put("/projects/:id", verifyAdmin, imageUpload.single("image"), updateProject);
-router.delete("/projects/:id", verifyAdmin, deleteProject);
+router.put("/projects/:id", ...adminPortfolio, imageUpload.single("image"), updateProject);
+router.delete("/projects/:id", ...adminPortfolio, deleteProject);
 
-
-// Additional route to get the entire portfolio tree
 router.get("/tree", getPortfolioTree);
-
-
-
 
 export default router;
