@@ -1,34 +1,29 @@
 import express from "express";
 import * as testimonialController from "./testimonial.controller.js";
-import { testimonialUpload } from "../../config/multer.js";
-import { guardModule } from "../auth/auth.middleware.js";
+import { testimonialUpload } from "../../config/multer.js"
 
 const router = express.Router();
-const adminTestimonials = guardModule("testimonials");
 
 router.get("/", testimonialController.getTestimonials);
+
 router.get("/:id", testimonialController.getTestimonial);
 
-router.post(
-  "/",
-  ...adminTestimonials,
+router.post("/",
   testimonialUpload.fields([
-    { name: "avatar", maxCount: 1 },
-    { name: "companyLogo", maxCount: 1 },
+    { name: "avatar",      maxCount: 1 },
+    { name: "companyLogo", maxCount: 1 }
   ]),
-  testimonialController.createTestimonial,
+  testimonialController.createTestimonial
 );
 
-router.put(
-  "/:id",
-  ...adminTestimonials,
+router.put("/:id",
   testimonialUpload.fields([
-    { name: "avatar", maxCount: 1 },
-    { name: "companyLogo", maxCount: 1 },
+    { name: "avatar",      maxCount: 1 },
+    { name: "companyLogo", maxCount: 1 }
   ]),
-  testimonialController.updateTestimonial,
+  testimonialController.updateTestimonial
 );
 
-router.delete("/:id", ...adminTestimonials, testimonialController.deleteTestimonial);
+router.delete("/:id", testimonialController.deleteTestimonial);
 
 export default router;

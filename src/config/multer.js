@@ -1,7 +1,6 @@
 import multer from "multer";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./cloudinary.js";
-import path from "node:path";
 
 /* ===============================
    COMMON LIMIT
@@ -15,22 +14,14 @@ const FILE_LIMIT = 2 * 1024 * 1024; // 2MB
 
 const resumeStorage = new CloudinaryStorage({
   cloudinary,
-  params: async (req, file) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    const base = path
-      .basename(file.originalname || "resume", ext)
-      .replace(/\s+/g, "_")
-      .replace(/[^\w.-]/g, "");
-    const safeExt = [".pdf", ".doc", ".docx"].includes(ext) ? ext : "";
-
-    return {
-      folder: "tech2globe/resumes",
-      // Force raw so resume URLs are stable and downloadable.
-      resource_type: "raw",
-      // Keep extension so downloaded filename remains .pdf/.doc/.docx.
-      public_id: `${Date.now()}-${base}${safeExt}`,
-    };
-  },
+  params: async (req, file) => ({
+    folder: "tech2globe/resumes",
+    resource_type: "auto", // important for non-image files
+    public_id: Date.now() + "-" + file.originalname
+  .replace(/\.[^/.]+$/, "") // remove extension
+  .replace(/\s+/g, "_")
+  .replace(/[^\w.-]/g, "")
+  }),
 });
 
 const resumeFilter = (req, file, cb) => {
@@ -80,26 +71,6 @@ export const imageUpload = multer({
   storage: imageStorage,
   fileFilter: imageFilter,
   limits: { fileSize: FILE_LIMIT },
-});
-
-/* ===============================
-   LIFE GALLERY (BULK / FOLDER)
-================================ */
-
-/** Max gallery images per request (+1 slot for banner on create/update). */
-export const LIFE_GALLERY_MAX_FILES = 150;
-const LIFE_GALLERY_FILE_SIZE = 5 * 1024 * 1024; // 5MB per image (before compression)
-
-const lifeGalleryMemoryStorage = multer.memoryStorage();
-
-/** Life uploads: memory → compress (sharp) → Cloudinary in middleware. */
-export const lifeGalleryUpload = multer({
-  storage: lifeGalleryMemoryStorage,
-  fileFilter: imageFilter,
-  limits: {
-    fileSize: LIFE_GALLERY_FILE_SIZE,
-    files: LIFE_GALLERY_MAX_FILES + 1,
-  },
 });
 
 /* ===============================

@@ -1,8 +1,6 @@
 import express from "express";
 import * as CareerController from "./career.controller.js";
-import { guardModule } from "../auth/auth.middleware.js";
-
-const adminCareer = guardModule("career");
+import { verifyAdmin } from "../auth/auth.middleware.js";
 import { resumeUpload } from "../../config/multer.js";
 
 const router = express.Router();
@@ -18,14 +16,14 @@ router.post(
 );
 
 // ADMIN
-router.get("/admin/stats", ...adminCareer, CareerController.getDashboardStats);
-router.get("/admin/jobs", ...adminCareer, CareerController.getAllJobs);
-router.post("/admin/jobs", ...adminCareer, CareerController.createJob);
-router.get("/admin/jobs/:id", ...adminCareer, CareerController.getJobByIdAdmin);
-router.put("/admin/jobs/:id", ...adminCareer, CareerController.updateJob);
-router.delete("/admin/jobs/:id", ...adminCareer, CareerController.deleteJob);
-router.get("/admin/applications", ...adminCareer, CareerController.getAllApplications);
-router.get("/admin/applications/:id", ...adminCareer, CareerController.getApplicationById);
-router.patch("/admin/applications/:id/status", ...adminCareer, CareerController.updateApplicationStatus);
+router.get("/admin/stats", verifyAdmin, CareerController.getDashboardStats);
+router.get("/admin/jobs", verifyAdmin, CareerController.getAllJobs);
+router.post("/admin/jobs", verifyAdmin, CareerController.createJob);
+router.get("/admin/jobs/:id", verifyAdmin, CareerController.getJobByIdAdmin);
+router.put("/admin/jobs/:id", verifyAdmin, CareerController.updateJob);
+router.delete("/admin/jobs/:id", verifyAdmin, CareerController.deleteJob);
+router.get("/admin/applications", verifyAdmin, CareerController.getAllApplications);
+router.get("/admin/applications/:id", verifyAdmin, CareerController.getApplicationById);
+router.patch("/admin/applications/:id/status", verifyAdmin, CareerController.updateApplicationStatus);
 
 export default router;

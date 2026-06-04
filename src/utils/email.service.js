@@ -1,16 +1,11 @@
 import nodemailer from "nodemailer";
 
-const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
-const smtpPort = Number(process.env.SMTP_PORT || 465);
-const smtpUser = (process.env.SMTP_EMAIL || process.env.EMAIL_USER || "").trim();
-const smtpPass = (process.env.SMTP_PASSWORD || process.env.EMAIL_PASSWORD || "").trim();
-
 export const transporter = nodemailer.createTransport({
-  host: smtpHost,
-  port: smtpPort,
-  secure: smtpPort === 465,
+  host: process.env.SMTP_HOST, // smtp.zoho.in
+  port: Number(process.env.SMTP_PORT), // 465
+  secure: true, // must be true for port 465
   auth: {
-    user: smtpUser,
-    pass: smtpPass,
+    user: process.env.SMTP_EMAIL, // career@tech2globe.com
+    pass: process.env.SMTP_PASSWORD, // vttbSwHG7nUH
   },
 });

@@ -1,12 +1,3 @@
 node_modules/
 .env
-
-# SQL migrations — run manually on the server DB; not deployed with the app
-sql/
-
-# Local Life @ T2G image backups (mirrors Cloudinary uploads)
-uploads/life-gallery/**
-!uploads/life-gallery/.gitkeep
-
-# Other uploads
-uploads/resumes/
+echo "uploads/resumes/" >> .gitignore"uploads/resumes/" 

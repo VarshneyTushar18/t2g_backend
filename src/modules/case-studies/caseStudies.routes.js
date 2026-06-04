@@ -1,25 +1,37 @@
 import express from "express";
 import * as controller from "./caseStudies.controller.js";
-import { guardModule } from "../auth/auth.middleware.js";
+import { caseStudiesUpload } from "../../config/multer.js";
 
 const router = express.Router();
-const adminCaseStudies = guardModule("case_studies");
 
-// ================= PUBLIC =================
 router.get("/", controller.getAll);
+
 router.get("/featured", controller.getFeatured);
-router.get("/categories", controller.getCategories);
 
-// ================= ADMIN (must be registered before /:slug) =================
-router.get("/admin/list", ...adminCaseStudies, controller.getAllAdmin);
-router.get("/admin", ...adminCaseStudies, controller.getAllAdmin);
-router.post("/categories", ...adminCaseStudies, controller.createCategory);
-router.delete("/categories/:id", ...adminCaseStudies, controller.deleteCategory);
-router.post("/", ...adminCaseStudies, controller.create);
-router.put("/:id", ...adminCaseStudies, controller.update);
-router.delete("/:id", ...adminCaseStudies, controller.remove);
+// ================= CATEGORIES =================
+router.get("/categories", controller.getCategories); // ✅ ADDED — must be before /:slug
 
-// ================= PUBLIC SINGLE (keep last — catches any slug) =================
-router.get("/:slug", controller.getBySlug);
+// ================= ADMIN =================
+router.get("/admin", controller.getAllAdmin);
+
+// ================= SINGLE =================
+router.get("/:slug", controller.getBySlug); // ⚠️ always last GET
+
+// ================= CREATE =================
+router.post(
+  "/",
+  caseStudiesUpload.single("featured_image"),
+  controller.create,
+);
+
+// ================= UPDATE =================
+router.put(
+  "/:id",
+  caseStudiesUpload.single("featured_image"),
+  controller.update,
+);
+
+// ================= DELETE =================
+router.delete("/:id", controller.remove);
 
 export default router;

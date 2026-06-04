@@ -10,6 +10,8 @@ import careerRoutes from "./modules/career/career.routes.js";
 import lifeRoutes from "./modules/life/life.routes.js";
 import testimonialRoutes from "./modules/testimonials/testimonial.routes.js";
 import caseStudiesRoutes from "./modules/case-studies/caseStudies.routes.js";
+import elevenLabsRoutes from "./modules/elevenlabs/elevenlabs.routes.js";
+import { handleTranscriptWebhook } from "./modules/elevenlabs/elevenlabs.controller.js";
 
 const app = express();
 
@@ -89,6 +91,16 @@ app.use((req, res, next) => {
 
 // ✅ Required when behind proxies (Railway / Cloudflare)
 app.set("trust proxy", 1);
+
+/**
+ * ElevenLabs transcript webhook (raw body required for HMAC)
+ */
+app.use("/api/elevenlabs", elevenLabsRoutes);
+app.post(
+  "/transcript_webhook",
+  express.raw({ type: "application/json" }),
+  handleTranscriptWebhook,
+);
 
 /**
  * Body parsers
