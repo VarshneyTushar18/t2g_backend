@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test:mail": "node src/utils/testingmail.js"
+    "test:mail": "node src/utils/testingmail.js",
+    "migrate:blog": "node scripts/migrate-blog.mjs",
+    "set:blog-settings": "node scripts/set-blog-settings.mjs",
+    "import:wp-blog": "node scripts/import-wp-blog.mjs"
   },
   "keywords": [],
   "author": "",

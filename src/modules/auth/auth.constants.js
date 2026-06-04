@@ -6,6 +6,7 @@ export const ADMIN_MODULES = [
   "life",
   "testimonials",
   "case_studies",
+  "blog",
 ];
 
 export const SUPER_ADMIN_ROLE = "super_admin";
@@ -13,5 +14,5 @@ export const SUPER_ADMIN_ROLE = "super_admin";
 /** Default modules per role (matches your manual admin_users.role enum) */
 export const ROLE_MODULES = {
   hr: ["career"],
-  digital_marketing: ["portfolio", "testimonials", "case_studies"],
+  digital_marketing: ["portfolio", "testimonials", "case_studies", "blog"],
 };

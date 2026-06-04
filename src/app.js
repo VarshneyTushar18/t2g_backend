@@ -10,6 +10,7 @@ import careerRoutes from "./modules/career/career.routes.js";
 import lifeRoutes from "./modules/life/life.routes.js";
 import testimonialRoutes from "./modules/testimonials/testimonial.routes.js";
 import caseStudiesRoutes from "./modules/case-studies/caseStudies.routes.js";
+import blogRoutes from "./modules/blog/blog.routes.js";
 import elevenLabsRoutes from "./modules/elevenlabs/elevenlabs.routes.js";
 import { handleTranscriptWebhook } from "./modules/elevenlabs/elevenlabs.controller.js";
 
@@ -119,17 +120,11 @@ app.use("/api/career", careerRoutes);
 app.use("/api/life", lifeRoutes);
 app.use("/api/testimonials", testimonialRoutes);
 app.use("/api/case-studies", caseStudiesRoutes);
+app.use("/api/blog", blogRoutes);
 
 /**
  * Static files
  */
 app.use("/uploads", express.static("uploads"));
-
-/**
- * Health check
- */
-app.get("/health", async (req, res) => {
-  res.json({ server: "running" });
-});
 
 export default app;

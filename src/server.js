@@ -1,30 +1,29 @@
 import app from "./app.js";
 import dotenv from "dotenv";
 import { testDBConnection } from "./config/db.js";
-
+import { testBlogDBConnection, isBlogDbReady } from "./config/blogDb.js";
+import { ensureBlogTables } from "./modules/blog/blog.setup.js";
 
 dotenv.config();
 
-// Set the port from environment variable or default to 5000
 const PORT = process.env.PORT || 5000;
 
-
-
-
-
-// Test database connection before starting the server  
 testDBConnection();
 
+testBlogDBConnection().then((ok) => {
+  if (ok) {
+    ensureBlogTables();
+  }
+});
 
-
-// Health check endpoint fake end Point to check if server is running and database is connected
 app.get("/health", async (req, res) => {
   res.json({
     server: "running",
-    database: "connected"
+    mainDatabase: process.env.DB_NAME || "tech2globe",
+    blogDatabase: process.env.BLOG_DB_NAME || "tech2globe_blog",
+    blogConnected: isBlogDbReady(),
   });
 });
-
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
