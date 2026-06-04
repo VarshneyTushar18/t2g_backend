@@ -204,3 +204,25 @@ export const getLeadById = async (req, res) => {
     return res.status(500).json({ success: false });
   }
 };
+
+// ================= DELETE LEAD =================
+
+export const deleteLead = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) {
+      return res.status(400).json({ success: false, message: "Invalid ID" });
+    }
+
+    const [result] = await pool.execute(`DELETE FROM leads WHERE id = ?`, [id]);
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ success: false, message: "Lead not found" });
+    }
+
+    return res.json({ success: true, message: "Deleted successfully" });
+  } catch (error) {
+    console.error("DELETE ERROR:", error.message);
+    return res.status(500).json({ success: false, message: "Failed to delete lead" });
+  }
+};
