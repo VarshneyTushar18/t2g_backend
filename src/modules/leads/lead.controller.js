@@ -263,7 +263,6 @@ export const createLead = async (req, res) => {
       id: result.insertId,
       message: "Lead created successfully",
     });
-
   } catch (error) {
     console.error("CREATE ERROR:", error.message);
 

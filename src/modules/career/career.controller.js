@@ -5,9 +5,7 @@ import { transporter } from "../../utils/email.service.js";
 
 const HR_EMAILS = process.env.OWNER_EMAILS
   ? process.env.OWNER_EMAILS.split(",").map((e) => e.trim())
-  : [(process.env.SMTP_EMAIL || process.env.EMAIL_USER || "").trim()].filter(Boolean);
-
-const MAIL_FROM = (process.env.SMTP_EMAIL || process.env.EMAIL_USER || "").trim();
+  : [process.env.SMTP_EMAIL];
 
 /** PDFs from upload_stream live under /image/upload/; /raw/upload/ links 404. */
 const toResumeDownloadUrl = (url) =>
@@ -119,7 +117,7 @@ export const submitApplication = async (req, res) => {
     // TO:   career@tech2globe.com, hr@tech2globe.com, rathiishita2004@gmail.com
     try {
       await transporter.sendMail({
-        from: `"Tech2Globe Careers" <${MAIL_FROM}>`,
+        from: `"Tech2Globe Careers" <${process.env.SMTP_EMAIL}>`,
         to: HR_EMAILS.join(","),   // ✅ all 3 HR emails
         replyTo: email,            // ✅ HR can reply directly to candidate
         subject: `Job Request - ${firstName} ${lastName}`,
@@ -156,7 +154,7 @@ export const submitApplication = async (req, res) => {
     // TO:   candidate's email
     try {
       await transporter.sendMail({
-        from: `"Tech2Globe" <${MAIL_FROM}>`,
+        from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
         to: email,
         subject: "Application Received – Tech2Globe",
         html: `

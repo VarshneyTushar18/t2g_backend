@@ -1,5 +1,12 @@
 import blogDb from "../../config/blogDb.js";
 import { normalizeFeaturedImage, rewriteBlogContentHtml } from "./blogMedia.js";
+import {
+  mapSeoFromRow,
+  normalizeSeoInput,
+  normalizeTagsInput,
+  parseTagsFromRow,
+  resolveSeoForOutput,
+} from "./blogSeo.js";
 
 const slugify = (text = "") =>
   String(text)
@@ -8,26 +15,45 @@ const slugify = (text = "") =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
-const mapPostRow = (row) => ({
-  id: row.id,
-  title: row.title,
-  slug: row.slug,
-  excerpt: row.excerpt || "",
-  content: row.content || "",
-  status: row.status,
-  featured_image: row.featured_image || "",
-  author: row.author_name || "Tech2globe",
-  view_count: Number(row.view_count || 0),
-  date: row.published_at || row.created_at,
-  modified: row.updated_at,
-  categories: row.category_ids
-    ? row.category_ids.split(",").map(Number).filter(Boolean)
-    : [],
-  category_names: row.category_names
-    ? row.category_names.split("||").filter(Boolean)
-    : [],
-  link: row.slug ? `/blogs/${row.slug}` : null,
-});
+const mapPostRow = (row) => {
+  const post = {
+    id: row.id,
+    title: row.title,
+    slug: row.slug,
+    excerpt: row.excerpt || "",
+    content: row.content || "",
+    status: row.status,
+    featured_image: row.featured_image || "",
+    author: row.author_name || "Tech2globe",
+    view_count: Number(row.view_count || 0),
+    date: row.published_at || row.created_at,
+    modified: row.updated_at,
+    categories: row.category_ids
+      ? row.category_ids.split(",").map(Number).filter(Boolean)
+      : [],
+    category_names: row.category_names
+      ? row.category_names.split("||").filter(Boolean)
+      : [],
+    tags: parseTagsFromRow(row),
+    seo: mapSeoFromRow(row),
+    link: row.slug ? `/blogs/${row.slug}` : null,
+  };
+  return post;
+};
+
+export const enrichPostForPublic = async (post) => {
+  const settings = await getBlogSettings();
+  const site = settings.media_base_url || process.env.SITE_URL || "";
+  return {
+    ...post,
+    featured_image: normalizeFeaturedImage(post.featured_image, settings),
+    content: rewriteBlogContentHtml(post.content, settings),
+    seo: resolveSeoForOutput(post.seo, post, {
+      ...settings,
+      site_url: site,
+    }),
+  };
+};
 
 const postSelect = `
   SELECT
@@ -37,6 +63,19 @@ const postSelect = `
     p.excerpt,
     p.content,
     p.featured_image,
+    p.meta_title,
+    p.meta_description,
+    p.focus_keyword,
+    p.canonical_url,
+    p.robots_noindex,
+    p.robots_nofollow,
+    p.og_title,
+    p.og_description,
+    p.og_image,
+    p.twitter_title,
+    p.twitter_description,
+    p.twitter_image,
+    p.tags,
     p.status,
     p.author_name,
     p.view_count,
@@ -75,9 +114,10 @@ export const getAllAdmin = async ({ page = 1, limit = 20, search = "" } = {}) =>
   let where = "WHERE p.is_active = 1";
 
   if (search) {
-    where += " AND (p.title LIKE ? OR p.slug LIKE ? OR p.excerpt LIKE ?)";
+    where +=
+      " AND (p.title LIKE ? OR p.slug LIKE ? OR p.excerpt LIKE ? OR p.meta_title LIKE ? OR p.focus_keyword LIKE ?)";
     const q = `%${search}%`;
-    params.push(q, q, q);
+    params.push(q, q, q, q, q);
   }
 
   const [[{ total }]] = await blogDb.query(
@@ -107,6 +147,9 @@ export const getPublishedPosts = async ({
   page = 1,
   limit = 6,
   category = "",
+  search = "",
+  sort = "recent",
+  month = "",
 } = {}) => {
   const offset = (page - 1) * limit;
   const params = [];
@@ -124,6 +167,25 @@ export const getPublishedPosts = async ({
     params.push(normalized, normalized.replace(/-/g, " "));
   }
 
+  if (search) {
+    where +=
+      " AND (p.title LIKE ? OR p.slug LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)";
+    const q = `%${search}%`;
+    params.push(q, q, q, q);
+  }
+
+  const monthKey = String(month).trim();
+  if (/^\d{4}-\d{2}$/.test(monthKey)) {
+    where +=
+      " AND DATE_FORMAT(COALESCE(p.published_at, p.created_at), '%Y-%m') = ?";
+    params.push(monthKey);
+  }
+
+  const orderBy =
+    sort === "popular"
+      ? "p.view_count DESC, COALESCE(p.published_at, p.created_at) DESC"
+      : "COALESCE(p.published_at, p.created_at) DESC";
+
   const [[{ total }]] = await blogDb.query(
     `SELECT COUNT(*) AS total FROM blog_posts p ${where}`,
     params,
@@ -133,7 +195,7 @@ export const getPublishedPosts = async ({
     `${postSelect}
      ${where}
      ${groupByPost}
-     ORDER BY COALESCE(p.published_at, p.created_at) DESC
+     ORDER BY ${orderBy}
      LIMIT ? OFFSET ?`,
     [...params, limit, offset],
   );
@@ -172,6 +234,46 @@ export const getCategories = async () => {
   return rows;
 };
 
+/** Categories that have at least one published post (for public sidebar). */
+export const getPublishedCategories = async () => {
+  const [rows] = await blogDb.query(
+    `SELECT c.id, c.name, c.slug, COUNT(DISTINCT p.id) AS post_count
+     FROM blog_categories c
+     INNER JOIN blog_post_categories pc ON pc.category_id = c.id
+     INNER JOIN blog_posts p ON p.id = pc.post_id
+       AND p.status = 'publish' AND p.is_active = 1
+     GROUP BY c.id, c.name, c.slug
+     ORDER BY c.name ASC`,
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    post_count: Number(r.post_count || 0),
+  }));
+};
+
+/** Monthly archives for public sidebar (newest first). */
+export const getPublishedArchives = async (limit = 12) => {
+  const [rows] = await blogDb.query(
+    `SELECT
+       DATE_FORMAT(COALESCE(p.published_at, p.created_at), '%Y-%m') AS month_key,
+       DATE_FORMAT(COALESCE(p.published_at, p.created_at), '%M %Y') AS label,
+       COUNT(*) AS post_count
+     FROM blog_posts p
+     WHERE p.status = 'publish' AND p.is_active = 1
+     GROUP BY month_key, label
+     ORDER BY month_key DESC
+     LIMIT ?`,
+    [Math.min(Math.max(Number(limit) || 12, 1), 24)],
+  );
+  return rows.map((r) => ({
+    month: r.month_key,
+    label: r.label,
+    post_count: Number(r.post_count || 0),
+  }));
+};
+
 export const createCategory = async (name) => {
   const slug = slugify(name);
   const [result] = await blogDb.query(
@@ -183,6 +285,19 @@ export const createCategory = async (name) => {
 
 export const deleteCategory = async (id) => {
   await blogDb.query("DELETE FROM blog_categories WHERE id = ?", [id]);
+};
+
+export const getAllTags = async () => {
+  const [rows] = await blogDb.query(
+    "SELECT tags FROM blog_posts WHERE tags IS NOT NULL AND is_active = 1",
+  );
+  const set = new Set();
+  for (const row of rows) {
+    for (const tag of parseTagsFromRow(row)) {
+      set.add(tag);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
 };
 
 const syncCategories = async (postId, categoryIds = []) => {
@@ -206,6 +321,8 @@ export const createPost = async (data) => {
     status = "draft",
     author_name = "Tech2globe",
     categories = [],
+    seo: seoInput,
+    tags: tagsInput,
   } = data;
 
   const slug = slugify(data.slug || title);
@@ -215,18 +332,41 @@ export const createPost = async (data) => {
     throw err;
   }
 
+  const seo = normalizeSeoInput(
+    { ...data, seo: seoInput },
+    { title, excerpt, featured_image },
+  );
+  const tags = normalizeTagsInput({ tags: tagsInput, ...data });
   const publishedAt = status === "publish" ? new Date() : null;
 
   const [result] = await blogDb.query(
     `INSERT INTO blog_posts
-      (title, slug, excerpt, content, featured_image, status, author_name, published_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (title, slug, excerpt, content, featured_image,
+       meta_title, meta_description, focus_keyword, canonical_url,
+       robots_noindex, robots_nofollow,
+       og_title, og_description, og_image,
+       twitter_title, twitter_description, twitter_image,
+       tags, status, author_name, published_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       title,
       slug,
       excerpt,
       content,
       featured_image || null,
+      seo.meta_title || null,
+      seo.meta_description || null,
+      seo.focus_keyword || null,
+      seo.canonical_url || null,
+      seo.robots_noindex ? 1 : 0,
+      seo.robots_nofollow ? 1 : 0,
+      seo.og_title || null,
+      seo.og_description || null,
+      seo.og_image || null,
+      seo.twitter_title || null,
+      seo.twitter_description || null,
+      seo.twitter_image || null,
+      JSON.stringify(tags),
       status,
       author_name,
       publishedAt,
@@ -249,7 +389,15 @@ export const updatePost = async (id, data) => {
     status = existing.status,
     author_name = existing.author,
     categories = [],
+    seo: seoInput,
+    tags: tagsInput,
   } = data;
+
+  const seo = normalizeSeoInput(
+    { ...data, seo: seoInput },
+    { title, excerpt, featured_image },
+  );
+  const tags = normalizeTagsInput({ tags: tagsInput, ...data });
 
   const slug = slugify(data.slug || title || existing.slug);
   if (!slug) {
@@ -269,7 +417,11 @@ export const updatePost = async (id, data) => {
   await blogDb.query(
     `UPDATE blog_posts
      SET title = ?, slug = ?, excerpt = ?, content = ?, featured_image = ?,
-         status = ?, author_name = ?, published_at = ?
+         meta_title = ?, meta_description = ?, focus_keyword = ?, canonical_url = ?,
+         robots_noindex = ?, robots_nofollow = ?,
+         og_title = ?, og_description = ?, og_image = ?,
+         twitter_title = ?, twitter_description = ?, twitter_image = ?,
+         tags = ?, status = ?, author_name = ?, published_at = ?
      WHERE id = ?`,
     [
       title,
@@ -277,6 +429,19 @@ export const updatePost = async (id, data) => {
       excerpt,
       content,
       featured_image || null,
+      seo.meta_title || null,
+      seo.meta_description || null,
+      seo.focus_keyword || null,
+      seo.canonical_url || null,
+      seo.robots_noindex ? 1 : 0,
+      seo.robots_nofollow ? 1 : 0,
+      seo.og_title || null,
+      seo.og_description || null,
+      seo.og_image || null,
+      seo.twitter_title || null,
+      seo.twitter_description || null,
+      seo.twitter_image || null,
+      JSON.stringify(tags),
       status,
       author_name,
       publishedAt,
@@ -292,21 +457,28 @@ export const deletePost = async (id) => {
   await blogDb.query("DELETE FROM blog_posts WHERE id = ?", [id]);
 };
 
-export const toWordPressShape = (post, settings = {}) => ({
-  id: post.id,
-  slug: post.slug,
-  date: post.date,
-  modified: post.modified,
-  link: post.link,
-  title: { rendered: post.title },
-  excerpt: { rendered: post.excerpt ? `<p>${post.excerpt}</p>` : "" },
-  content: { rendered: rewriteBlogContentHtml(post.content, settings) },
-  featured_image: normalizeFeaturedImage(post.featured_image, settings),
-  categories: post.categories,
-  category_names: post.category_names || [],
-  view_count: Number(post.view_count || 0),
-  author: post.author,
-});
+export const toWordPressShape = (post, settings = {}) => {
+  const site = settings.media_base_url || process.env.SITE_URL || "";
+  const seo = resolveSeoForOutput(post.seo, post, { ...settings, site_url: site });
+  return {
+    id: post.id,
+    slug: post.slug,
+    date: post.date,
+    modified: post.modified,
+    link: post.link,
+    title: { rendered: post.title },
+    excerpt: { rendered: post.excerpt ? `<p>${post.excerpt}</p>` : "" },
+    content: { rendered: rewriteBlogContentHtml(post.content, settings) },
+    featured_image: normalizeFeaturedImage(post.featured_image, settings),
+    categories: post.categories,
+    category_names: post.category_names || [],
+    tags: post.tags || [],
+    view_count: Number(post.view_count || 0),
+    author: post.author,
+    seo,
+    yoast_head_json: seo,
+  };
+};
 
 export const incrementViewCount = async (id) => {
   await blogDb.query("UPDATE blog_posts SET view_count = view_count + 1 WHERE id = ?", [

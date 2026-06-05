@@ -28,7 +28,7 @@ export const inferRoleFromModules = (moduleKeys) => {
   const valid = moduleKeys.filter((m) => ADMIN_MODULES.includes(m));
   const hasCareer = valid.includes("career");
   const hasMarketing = valid.some((m) =>
-    ["portfolio", "testimonials", "case_studies"].includes(m),
+    ["portfolio", "testimonials", "case_studies", "blog"].includes(m),
   );
   if (hasMarketing && !hasCareer) return "digital_marketing";
   if (hasCareer && !hasMarketing) return "hr";

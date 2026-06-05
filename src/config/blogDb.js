@@ -6,6 +6,9 @@ dotenv.config();
 /**
  * Blog-only database (separate from main app DB).
  * Main DB (testimonials, leads, auth, …) → config/db.js
+ *
+ * Uses BLOG_DB_* from .env. Falls back to DB_HOST/USER/PASSWORD only for host credentials,
+ * never uses DB_NAME for the blog database name.
  */
 const blogPool = mysql.createPool({
   host: process.env.BLOG_DB_HOST || process.env.DB_HOST || "localhost",
@@ -18,16 +21,27 @@ const blogPool = mysql.createPool({
   queueLimit: 0,
 });
 
+let blogDbReady = false;
+
+export const isBlogDbReady = () => blogDbReady;
+
+/** Non-fatal: other API modules keep working if blog DB is down. */
 export const testBlogDBConnection = async () => {
   try {
     const connection = await blogPool.getConnection();
     const dbName = process.env.BLOG_DB_NAME || "tech2globe_blog";
     console.log(`Blog MySQL connected (${dbName})`);
     connection.release();
+    blogDbReady = true;
+    return true;
   } catch (error) {
-    console.error("Blog MySQL connection failed:", error.message);
-    console.error("  → Create DB and run: npm run migrate:blog");
-    process.exit(1);
+    blogDbReady = false;
+    console.warn(
+      "Blog MySQL not available — /api/blog will return 503. Other modules are unaffected.",
+    );
+    console.warn(`  → ${error.message}`);
+    console.warn("  → Set BLOG_DB_* in .env and run: npm run migrate:blog");
+    return false;
   }
 };
 

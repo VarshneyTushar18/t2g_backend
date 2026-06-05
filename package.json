@@ -10,6 +10,7 @@
     "set:blog-settings": "node scripts/set-blog-settings.mjs",
     "copy:blog-db": "node scripts/copy-blog-to-separate-db.mjs",
     "import:wp-blog": "node scripts/import-wp-blog.mjs",
+    "fix:blog-authors": "node scripts/fix-blog-authors-from-wp.mjs",
     "report:legacy-blog-images": "node scripts/report-legacy-blog-images.mjs",
     "export:blog-seo": "node scripts/export-blog-seo-excel.mjs",
     "test:mail": "node src/utils/testingmail.js"
@@ -19,7 +20,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "axios": "^1.16.0",
+    "axios": "^1.17.0",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^1.41.3",
     "cookie-parser": "^1.4.7",

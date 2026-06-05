@@ -22,6 +22,7 @@ const app = express();
 const allowedOrigins = [
   process.env.CLIENT_URL_ADMIN,
   process.env.CLIENT_URL_MAIN,
+  process.env.CLIENT_URL_STAGE,
   "http://localhost:3000",
   "http://localhost:3001",
 ].filter(Boolean);
@@ -48,7 +49,7 @@ const corsOptions = {
     console.log("Blocked by CORS:", origin);
     return callback(new Error("Not allowed by CORS"));
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // ✅ Added OPTIONS
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
 };
@@ -73,7 +74,7 @@ app.use((req, res, next) => {
 
       res.header(
         "Access-Control-Allow-Methods",
-        "GET,POST,PUT,DELETE,OPTIONS"
+        "GET,POST,PUT,PATCH,DELETE,OPTIONS"
       );
       res.header(
         "Access-Control-Allow-Headers",
@@ -126,12 +127,5 @@ app.use("/api/blog", blogRoutes);
  * Static files
  */
 app.use("/uploads", express.static("uploads"));
-
-/**
- * Health check
- */
-app.get("/health", async (req, res) => {
-  res.json({ server: "running" });
-});
 
 export default app;

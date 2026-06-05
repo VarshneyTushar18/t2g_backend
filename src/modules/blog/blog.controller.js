@@ -26,7 +26,10 @@ const normalizePayload = (body = {}) => {
     excerpt: body.excerpt || "",
     status: body.status || "draft",
     featured_image: body.featured_image || "",
+    author_name: body.author_name || body.author || "Tech2globe",
     categories: body.categories || body.category_ids || [],
+    seo: body.seo,
+    tags: body.tags,
   };
 };
 
@@ -46,19 +49,37 @@ const handleBlogError = (res, err, fallback) => {
   return res.status(500).json({ error: err.message || fallback });
 };
 
+const formatPublicPost = async (post, format) => {
+  const settings = await model.getBlogSettings();
+  if (format === "wp") {
+    return model.toWordPressShape(post, settings);
+  }
+  return model.enrichPostForPublic(post);
+};
+
 export const getPublicPosts = async (req, res) => {
   try {
     const page = Math.max(Number(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(req.query.per_page || req.query.limit) || 6, 1), 100);
     const category = String(req.query.category || "").trim();
+    const search = String(req.query.search || req.query.q || "").trim();
+    const month = String(req.query.month || "").trim();
+    const sort = String(req.query.sort || "recent").toLowerCase() === "popular"
+      ? "popular"
+      : "recent";
     const format = String(req.query.format || "").toLowerCase();
 
-    const result = await model.getPublishedPosts({ page, limit, category });
-    const settings = format === "wp" ? await model.getBlogSettings() : {};
-    const data =
-      format === "wp"
-        ? result.data.map((p) => model.toWordPressShape(p, settings))
-        : result.data;
+    const result = await model.getPublishedPosts({
+      page,
+      limit,
+      category,
+      search,
+      sort,
+      month,
+    });
+    const data = await Promise.all(
+      result.data.map((p) => formatPublicPost(p, format)),
+    );
 
     res.json({
       success: true,
@@ -82,10 +103,9 @@ export const getPublicBySlug = async (req, res) => {
     // Track reads for "Most Viewed Posts" sidebar.
     await model.incrementViewCount(post.id);
     const fresh = await model.getBySlug(req.params.slug);
-    const settings = format === "wp" ? await model.getBlogSettings() : {};
     res.json({
       success: true,
-      data: format === "wp" ? model.toWordPressShape(fresh, settings) : fresh,
+      data: await formatPublicPost(fresh, format),
     });
   } catch (err) {
     console.error("blog getPublicBySlug error:", err);
@@ -135,8 +155,70 @@ export const getCategories = async (req, res) => {
   }
 };
 
+export const getPublicCategories = async (_req, res) => {
+  try {
+    const data = await model.getPublishedCategories();
+    res.json({ success: true, data });
+  } catch (err) {
+    return handleBlogError(res, err, "Failed to fetch blog categories");
+  }
+};
+
+export const getPublicArchives = async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 12, 1), 24);
+    const data = await model.getPublishedArchives(limit);
+    res.json({ success: true, data });
+  } catch (err) {
+    return handleBlogError(res, err, "Failed to fetch blog archives");
+  }
+};
+
 export const getTags = async (_req, res) => {
-  res.json({ success: true, data: [] });
+  try {
+    const data = await model.getAllTags();
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("blog getTags error:", err);
+    res.status(500).json({ error: "Failed to fetch tags" });
+  }
+};
+
+/** Field list for admin post editor (SEO tab). */
+export const getPostEditorSchema = async (_req, res) => {
+  res.json({
+    success: true,
+    post: {
+      fields: [
+        "title",
+        "slug",
+        "excerpt",
+        "content",
+        "featured_image",
+        "status",
+        "categories",
+        "tags",
+        "author_name",
+      ],
+    },
+    seo: {
+      hint: "Send as body.seo or top-level keys. Leave blank to auto-use title/excerpt/featured image on the live site.",
+      fields: [
+        { key: "meta_title", label: "SEO title", maxLength: 60 },
+        { key: "meta_description", label: "Meta description", maxLength: 160 },
+        { key: "focus_keyword", label: "Focus keyword" },
+        { key: "canonical_url", label: "Canonical URL" },
+        { key: "robots_noindex", label: "Hide from search (noindex)", type: "boolean" },
+        { key: "robots_nofollow", label: "Nofollow links", type: "boolean" },
+        { key: "og_title", label: "Open Graph title" },
+        { key: "og_description", label: "Open Graph description" },
+        { key: "og_image", label: "Open Graph image URL" },
+        { key: "twitter_title", label: "Twitter title" },
+        { key: "twitter_description", label: "Twitter description" },
+        { key: "twitter_image", label: "Twitter image URL" },
+      ],
+    },
+  });
 };
 
 export const create = async (req, res) => {

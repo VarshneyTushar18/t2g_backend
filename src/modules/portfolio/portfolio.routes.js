@@ -5,11 +5,10 @@ import {
   getProjects, createProject, updateProject, deleteProject,
 } from "../portfolio/portfolio.controller.js";
 import { guardModule } from "../auth/auth.middleware.js";
-
-const adminPortfolio = guardModule("portfolio");
 import { imageUpload } from "../../config/multer.js";
 import { getPortfolioTree } from "../portfolio/portfolio.controller.js";
 
+const adminPortfolio = guardModule("portfolio");
 const router = express.Router();
 
 // Public
@@ -35,11 +34,6 @@ router.post(
 router.put("/projects/:id", ...adminPortfolio, imageUpload.single("image"), updateProject);
 router.delete("/projects/:id", ...adminPortfolio, deleteProject);
 
-
-// Additional route to get the entire portfolio tree
 router.get("/tree", getPortfolioTree);
-
-
-
 
 export default router;

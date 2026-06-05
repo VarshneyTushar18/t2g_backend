@@ -16,7 +16,7 @@ const setAuthCookie = (res, token) => {
 };
 
 async function verifyTurnstile(cfToken) {
-  const secret = process.env.TURNSTILE_SECRET;
+  const secret = process.env.TURNSTILE_SECRET || process.env.TURNSTILE_SECRET_KEY;
   if (!secret) return { ok: true };
 
   if (!cfToken) {

@@ -227,7 +227,6 @@ export const removeGalleryImages = async (id, urlsToRemove) => {
   return getLifeItemByIdAdmin(id);
 };
 
-
 export const getAllImages = async () => {
   const [rows] = await pool.query(`
     SELECT banner, gallery FROM life_gallery
@@ -236,12 +235,10 @@ export const getAllImages = async () => {
   let allImages = [];
 
   rows.forEach(row => {
-    // banner
     if (row.banner) {
       allImages.push(row.banner);
     }
 
-    // gallery
     if (row.gallery) {
       try {
         const parsed = typeof row.gallery === "string"
