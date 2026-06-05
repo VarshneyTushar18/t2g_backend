@@ -99,7 +99,11 @@ export const getAllApplications = async ({ status, jobId, search, page = 1, limi
   }
   const [[{ total }]] = await pool.query(`SELECT COUNT(*) as total FROM job_applications a WHERE ${where}`, params);
   const [rows] = await pool.query(
-    `SELECT a.id, a.first_name, a.last_name, a.email, a.phone, a.job_title, a.job_id, a.notice_period, a.last_company, a.status, a.resume_file, a.applied_at FROM job_applications a WHERE ${where} ORDER BY a.applied_at DESC LIMIT ? OFFSET ?`,
+    `SELECT a.id, a.first_name, a.last_name, a.email, a.phone, a.job_title, a.job_id,
+            a.portfolio_link, a.linked_in, a.current_ctc, a.expected_ctc, a.join_date,
+            a.notice_period, a.last_company, a.comments, a.admin_notes, a.status,
+            a.resume_file, a.applied_at
+     FROM job_applications a WHERE ${where} ORDER BY a.applied_at DESC LIMIT ? OFFSET ?`,
     [...params, parseInt(limit), offset]
   );
   return { data: rows, total: parseInt(total), page: parseInt(page), limit: parseInt(limit) };

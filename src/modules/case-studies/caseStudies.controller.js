@@ -4,7 +4,7 @@ import * as model from "../case-studies/caseStudies.model.js";
 export const getFeatured = async (req, res) => {
   try {
     const data = await model.getFeaturedCaseStudies();
-    res.json({ success: true, data });
+    res.json(data);
   } catch (err) {
     console.error("getFeatured error:", err);
     res.status(500).json({ error: "Failed to fetch featured case studies" });
@@ -31,6 +31,7 @@ export const getAll = async (req, res) => {
           title: row.title,
           description: row.short_description,
           slug: row.slug,
+          featured_image: row.featured_image,
         });
       }
     });
@@ -94,26 +95,15 @@ export const getBySlug = async (req, res) => {
 // ================= CREATE =================
 export const create = async (req, res) => {
   try {
-    const payload = {
-      title: req.body.title?.trim(),
-      slug: req.body.slug?.trim(),
-      category_id: req.body.category_id,
-      short_description: req.body.short_description || "",
-      content: req.body.content || "",
-      is_featured: req.body.is_featured ? 1 : 0,
+    const featured_image = req.file?.path || req.body.featured_image || null;
+
+    await model.createCaseStudy({
+      ...req.body,
+      featured_image,
       table_data: req.body.table_data
         ? JSON.parse(req.body.table_data)
         : null,
-    };
-
-    // 🔥 Basic validation (important for Postman)
-    if (!payload.title || !payload.slug || !payload.category_id) {
-      return res.status(400).json({
-        error: "title, slug, and category_id are required",
-      });
-    }
-
-    await model.createCaseStudy(payload);
+    });
 
     res.json({ message: "Case study created" });
   } catch (err) {
@@ -125,19 +115,13 @@ export const create = async (req, res) => {
 // ================= UPDATE =================
 export const update = async (req, res) => {
   try {
-    const payload = {
-      title: req.body.title?.trim(),
-      slug: req.body.slug?.trim(),
-      category_id: req.body.category_id,
-      short_description: req.body.short_description || "",
-      content: req.body.content || "",
-      is_featured: req.body.is_featured ? 1 : 0,
-      table_data: req.body.table_data
-        ? JSON.parse(req.body.table_data)
-        : null,
-    };
+    const featured_image = req.file?.path || req.body.featured_image || null;
 
-    await model.updateCaseStudy(req.params.id, payload);
+    await model.updateCaseStudy(req.params.id, {
+      ...req.body,
+      featured_image,
+      table_data: req.body.table_data ? JSON.parse(req.body.table_data) : null,
+    });
 
     res.json({ message: "Case study updated" });
   } catch (err) {

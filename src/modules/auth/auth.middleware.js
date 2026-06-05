@@ -2,10 +2,14 @@ import jwt from "jsonwebtoken";
 import { ROLE_MODULES, SUPER_ADMIN_ROLE } from "./auth.constants.js";
 import { canPerform, httpMethodToAction } from "./modulePermissions.js";
 
+const isCrossSiteAdmin =
+  process.env.NODE_ENV === "production" ||
+  process.env.AUTH_COOKIE_CROSS_SITE === "true";
+
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax",
+  secure: isCrossSiteAdmin,
+  sameSite: isCrossSiteAdmin ? "none" : "lax",
 };
 
 export { cookieOptions };

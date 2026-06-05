@@ -15,12 +15,40 @@ const setAuthCookie = (res, token) => {
   res.cookie("token", token, cookieOptions);
 };
 
+async function verifyTurnstile(cfToken) {
+  const secret = process.env.TURNSTILE_SECRET;
+  if (!secret) return { ok: true };
+
+  if (!cfToken) {
+    return { ok: false, message: "Captcha verification required" };
+  }
+
+  const verify = await fetch(
+    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret, response: cfToken }),
+    },
+  );
+  const captcha = await verify.json();
+  if (!captcha.success) {
+    return { ok: false, message: "Captcha verification failed" };
+  }
+  return { ok: true };
+}
+
 export const loginAdmin = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, cfToken } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ message: "Email and password are required" });
+    }
+
+    const captcha = await verifyTurnstile(cfToken);
+    if (!captcha.ok) {
+      return res.status(400).json({ message: captcha.message });
     }
 
     const normalizedEmail = email.toLowerCase().trim();
@@ -75,7 +103,7 @@ export const loginAdmin = async (req, res) => {
     });
 
     setAuthCookie(res, token);
-    res.json({ success: true, user: authUser });
+    res.json({ success: true, token, user: authUser });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Internal server error" });

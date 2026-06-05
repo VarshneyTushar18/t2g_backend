@@ -6,6 +6,12 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "migrate:blog": "node scripts/migrate-blog.mjs",
+    "set:blog-settings": "node scripts/set-blog-settings.mjs",
+    "copy:blog-db": "node scripts/copy-blog-to-separate-db.mjs",
+    "import:wp-blog": "node scripts/import-wp-blog.mjs",
+    "report:legacy-blog-images": "node scripts/report-legacy-blog-images.mjs",
+    "export:blog-seo": "node scripts/export-blog-seo-excel.mjs",
     "test:mail": "node src/utils/testingmail.js"
   },
   "keywords": [],
@@ -31,6 +37,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "xlsx": "^0.18.5"
   }
 }

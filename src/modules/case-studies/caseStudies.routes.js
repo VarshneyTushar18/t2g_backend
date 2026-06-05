@@ -1,6 +1,7 @@
 import express from "express";
 import * as controller from "./caseStudies.controller.js";
 import { guardModule } from "../auth/auth.middleware.js";
+import { caseStudiesUpload } from "../../config/multer.js";
 
 const router = express.Router();
 const adminCaseStudies = guardModule("case_studies");
@@ -15,8 +16,18 @@ router.get("/admin/list", ...adminCaseStudies, controller.getAllAdmin);
 router.get("/admin", ...adminCaseStudies, controller.getAllAdmin);
 router.post("/categories", ...adminCaseStudies, controller.createCategory);
 router.delete("/categories/:id", ...adminCaseStudies, controller.deleteCategory);
-router.post("/", ...adminCaseStudies, controller.create);
-router.put("/:id", ...adminCaseStudies, controller.update);
+router.post(
+  "/",
+  ...adminCaseStudies,
+  caseStudiesUpload.single("featured_image"),
+  controller.create,
+);
+router.put(
+  "/:id",
+  ...adminCaseStudies,
+  caseStudiesUpload.single("featured_image"),
+  controller.update,
+);
 router.delete("/:id", ...adminCaseStudies, controller.remove);
 
 // ================= PUBLIC SINGLE (keep last — catches any slug) =================

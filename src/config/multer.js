@@ -25,9 +25,8 @@ const resumeStorage = new CloudinaryStorage({
 
     return {
       folder: "tech2globe/resumes",
-      // Force raw so resume URLs are stable and downloadable.
-      resource_type: "raw",
-      // Keep extension so downloaded filename remains .pdf/.doc/.docx.
+      // upload_stream stores PDFs/DOCs as image delivery; raw URLs 404.
+      resource_type: "auto",
       public_id: `${Date.now()}-${base}${safeExt}`,
     };
   },
