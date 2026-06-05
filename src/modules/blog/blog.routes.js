@@ -11,6 +11,8 @@ router.use(requireBlogDb);
 // ================= PUBLIC (for main site / future Next.js) =================
 router.get("/posts", controller.getPublicPosts);
 router.get("/posts/:slug", controller.getPublicBySlug);
+router.get("/public/categories", controller.getPublicCategories);
+router.get("/public/archives", controller.getPublicArchives);
 
 // ================= ADMIN =================
 router.get("/categories", ...adminBlog, controller.getCategories);

@@ -147,6 +147,9 @@ export const getPublishedPosts = async ({
   page = 1,
   limit = 6,
   category = "",
+  search = "",
+  sort = "recent",
+  month = "",
 } = {}) => {
   const offset = (page - 1) * limit;
   const params = [];
@@ -164,6 +167,25 @@ export const getPublishedPosts = async ({
     params.push(normalized, normalized.replace(/-/g, " "));
   }
 
+  if (search) {
+    where +=
+      " AND (p.title LIKE ? OR p.slug LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)";
+    const q = `%${search}%`;
+    params.push(q, q, q, q);
+  }
+
+  const monthKey = String(month).trim();
+  if (/^\d{4}-\d{2}$/.test(monthKey)) {
+    where +=
+      " AND DATE_FORMAT(COALESCE(p.published_at, p.created_at), '%Y-%m') = ?";
+    params.push(monthKey);
+  }
+
+  const orderBy =
+    sort === "popular"
+      ? "p.view_count DESC, COALESCE(p.published_at, p.created_at) DESC"
+      : "COALESCE(p.published_at, p.created_at) DESC";
+
   const [[{ total }]] = await blogDb.query(
     `SELECT COUNT(*) AS total FROM blog_posts p ${where}`,
     params,
@@ -173,7 +195,7 @@ export const getPublishedPosts = async ({
     `${postSelect}
      ${where}
      ${groupByPost}
-     ORDER BY COALESCE(p.published_at, p.created_at) DESC
+     ORDER BY ${orderBy}
      LIMIT ? OFFSET ?`,
     [...params, limit, offset],
   );
@@ -210,6 +232,46 @@ export const getCategories = async () => {
     "SELECT id, name, slug, created_at FROM blog_categories ORDER BY name ASC",
   );
   return rows;
+};
+
+/** Categories that have at least one published post (for public sidebar). */
+export const getPublishedCategories = async () => {
+  const [rows] = await blogDb.query(
+    `SELECT c.id, c.name, c.slug, COUNT(DISTINCT p.id) AS post_count
+     FROM blog_categories c
+     INNER JOIN blog_post_categories pc ON pc.category_id = c.id
+     INNER JOIN blog_posts p ON p.id = pc.post_id
+       AND p.status = 'publish' AND p.is_active = 1
+     GROUP BY c.id, c.name, c.slug
+     ORDER BY c.name ASC`,
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    post_count: Number(r.post_count || 0),
+  }));
+};
+
+/** Monthly archives for public sidebar (newest first). */
+export const getPublishedArchives = async (limit = 12) => {
+  const [rows] = await blogDb.query(
+    `SELECT
+       DATE_FORMAT(COALESCE(p.published_at, p.created_at), '%Y-%m') AS month_key,
+       DATE_FORMAT(COALESCE(p.published_at, p.created_at), '%M %Y') AS label,
+       COUNT(*) AS post_count
+     FROM blog_posts p
+     WHERE p.status = 'publish' AND p.is_active = 1
+     GROUP BY month_key, label
+     ORDER BY month_key DESC
+     LIMIT ?`,
+    [Math.min(Math.max(Number(limit) || 12, 1), 24)],
+  );
+  return rows.map((r) => ({
+    month: r.month_key,
+    label: r.label,
+    post_count: Number(r.post_count || 0),
+  }));
 };
 
 export const createCategory = async (name) => {

@@ -62,9 +62,21 @@ export const getPublicPosts = async (req, res) => {
     const page = Math.max(Number(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(req.query.per_page || req.query.limit) || 6, 1), 100);
     const category = String(req.query.category || "").trim();
+    const search = String(req.query.search || req.query.q || "").trim();
+    const month = String(req.query.month || "").trim();
+    const sort = String(req.query.sort || "recent").toLowerCase() === "popular"
+      ? "popular"
+      : "recent";
     const format = String(req.query.format || "").toLowerCase();
 
-    const result = await model.getPublishedPosts({ page, limit, category });
+    const result = await model.getPublishedPosts({
+      page,
+      limit,
+      category,
+      search,
+      sort,
+      month,
+    });
     const data = await Promise.all(
       result.data.map((p) => formatPublicPost(p, format)),
     );
@@ -140,6 +152,25 @@ export const getCategories = async (req, res) => {
   } catch (err) {
     console.error("blog getCategories error:", err);
     res.status(500).json({ error: "Failed to fetch categories" });
+  }
+};
+
+export const getPublicCategories = async (_req, res) => {
+  try {
+    const data = await model.getPublishedCategories();
+    res.json({ success: true, data });
+  } catch (err) {
+    return handleBlogError(res, err, "Failed to fetch blog categories");
+  }
+};
+
+export const getPublicArchives = async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 12, 1), 24);
+    const data = await model.getPublishedArchives(limit);
+    res.json({ success: true, data });
+  } catch (err) {
+    return handleBlogError(res, err, "Failed to fetch blog archives");
   }
 };
 

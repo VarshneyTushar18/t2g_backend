@@ -108,8 +108,19 @@ async function main() {
   console.log(`Source: ${WP_DB}.${postsTable}`);
   console.log(`Target: ${blogDbName}.blog_posts (with Yoast SEO + tags)`);
 
+  const usersTable = `${WP_PREFIX}users`;
+  const [wpUsers] = await wp.query(
+    `SELECT ID, display_name, user_nicename FROM ${usersTable}`,
+  );
+  const authorByUserId = new Map(
+    wpUsers.map((u) => [
+      u.ID,
+      (u.display_name || u.user_nicename || "").trim() || "Tech2globe",
+    ]),
+  );
+
   const [wpPosts] = await wp.query(
-    `SELECT ID, post_title, post_name, post_content, post_excerpt, post_status, post_date, post_modified
+    `SELECT ID, post_author, post_title, post_name, post_content, post_excerpt, post_status, post_date, post_modified
      FROM ${postsTable}
      WHERE post_type = 'post' AND post_status = 'publish'
      ORDER BY post_date DESC`,
@@ -200,6 +211,9 @@ async function main() {
       .map((r) => tagNameByTermId.get(r.term_id))
       .filter(Boolean);
 
+    const authorName =
+      authorByUserId.get(Number(row.post_author)) || "Tech2globe";
+
     const [ins] = await app.query(
       `INSERT INTO blog_posts
         (title, slug, excerpt, content, featured_image,
@@ -208,7 +222,7 @@ async function main() {
          og_title, og_description, og_image,
          twitter_title, twitter_description, twitter_image,
          tags, status, author_name, published_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publish', 'Tech2globe', ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publish', ?, ?)`,
       [
         row.post_title,
         slug,
@@ -228,6 +242,7 @@ async function main() {
         seo.twitter_description,
         seo.twitter_image,
         JSON.stringify(tags),
+        authorName,
         row.post_date,
       ],
     );

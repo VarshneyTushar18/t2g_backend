@@ -6,6 +6,13 @@ import blogDb from "../../config/blogDb.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sqlPath = path.join(__dirname, "../../../sql/blog_module.sql");
 
+const REQUIRED_TABLES = [
+  "blog_categories",
+  "blog_posts",
+  "blog_post_categories",
+  "blog_settings",
+];
+
 const SEO_COLUMN_MIGRATIONS = [
   { col: "meta_title", sql: "ALTER TABLE blog_posts ADD COLUMN meta_title VARCHAR(500) DEFAULT NULL AFTER featured_image" },
   { col: "meta_description", sql: "ALTER TABLE blog_posts ADD COLUMN meta_description TEXT DEFAULT NULL AFTER meta_title" },
@@ -22,27 +29,50 @@ const SEO_COLUMN_MIGRATIONS = [
   { col: "tags", sql: "ALTER TABLE blog_posts ADD COLUMN tags JSON DEFAULT NULL AFTER twitter_image" },
 ];
 
+async function tableExists(name) {
+  const [rows] = await blogDb.query("SHOW TABLES LIKE ?", [name]);
+  return rows.length > 0;
+}
+
 async function ensureColumn(col, sql) {
-  const [rows] = await blogDb.query(`SHOW COLUMNS FROM blog_posts LIKE ?`, [col]);
+  const [rows] = await blogDb.query("SHOW COLUMNS FROM blog_posts LIKE ?", [col]);
   if (!rows.length) {
     await blogDb.query(sql);
   }
 }
 
+async function installFreshSchema() {
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  const conn = await blogDb.getConnection();
+  try {
+    await conn.query("SET FOREIGN_KEY_CHECKS = 0");
+    await conn.query("DROP TABLE IF EXISTS blog_post_categories");
+    await conn.query("DROP TABLE IF EXISTS blog_posts");
+    await conn.query("DROP TABLE IF EXISTS blog_categories");
+    await conn.query("DROP TABLE IF EXISTS blog_settings");
+    await conn.query(sql);
+    await conn.query("SET FOREIGN_KEY_CHECKS = 1");
+  } finally {
+    conn.release();
+  }
+}
+
 export async function ensureBlogTables() {
   try {
-    const [posts] = await blogDb.query("SHOW TABLES LIKE 'blog_posts'");
-    const [settings] = await blogDb.query("SHOW TABLES LIKE 'blog_settings'");
-    if (!posts.length || !settings.length) {
-      const sql = fs.readFileSync(sqlPath, "utf8");
-      const statements = sql
-        .split(";")
-        .map((s) => s.trim())
-        .filter((s) => s && !s.startsWith("--"));
+    const missing = [];
+    for (const t of REQUIRED_TABLES) {
+      if (!(await tableExists(t))) missing.push(t);
+    }
 
-      for (const stmt of statements) {
-        await blogDb.query(stmt);
-      }
+    if (missing.length > 0) {
+      console.log(
+        `Blog schema incomplete (missing: ${missing.join(", ")}). Installing tables…`,
+      );
+      await installFreshSchema();
+    }
+
+    if (!(await tableExists("blog_posts"))) {
+      throw new Error("blog_posts table missing after setup");
     }
 
     const [viewCountCol] = await blogDb.query(
@@ -61,5 +91,6 @@ export async function ensureBlogTables() {
     console.log("Blog tables ensured automatically.");
   } catch (err) {
     console.error("Blog table setup failed:", err.message);
+    console.error("  → Run on server: npm run migrate:blog");
   }
 }

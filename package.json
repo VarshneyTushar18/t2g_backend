@@ -9,7 +9,8 @@
     "test:mail": "node src/utils/testingmail.js",
     "migrate:blog": "node scripts/migrate-blog.mjs",
     "set:blog-settings": "node scripts/set-blog-settings.mjs",
-    "import:wp-blog": "node scripts/import-wp-blog.mjs"
+    "import:wp-blog": "node scripts/import-wp-blog.mjs",
+    "fix:blog-authors": "node scripts/fix-blog-authors-from-wp.mjs"
   },
   "keywords": [],
   "author": "",
