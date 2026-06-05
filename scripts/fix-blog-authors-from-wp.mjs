@@ -13,13 +13,30 @@ const WP_DB = process.env.WP_DB_NAME || "buynfqw4_blogstech";
 const WP_PREFIX = process.env.WP_TABLE_PREFIX || "wp_";
 
 async function main() {
-  const wp = await mysql.createConnection({
-    host: process.env.WP_DB_HOST || process.env.DB_HOST || "localhost",
-    user: process.env.WP_DB_USER || process.env.DB_USER || "root",
-    password: process.env.WP_DB_PASSWORD ?? process.env.DB_PASSWORD ?? "",
-    database: WP_DB,
-    port: Number(process.env.WP_DB_PORT || process.env.DB_PORT || 3306),
-  });
+  const wpUser = process.env.WP_DB_USER || process.env.DB_USER || "root";
+  console.log(`WordPress source: ${WP_DB} (user: ${wpUser})`);
+  console.log(`Blog target: ${process.env.BLOG_DB_NAME || "tech2globe_blog"}`);
+
+  let wp;
+  try {
+    wp = await mysql.createConnection({
+      host: process.env.WP_DB_HOST || process.env.DB_HOST || "localhost",
+      user: wpUser,
+      password: process.env.WP_DB_PASSWORD ?? process.env.DB_PASSWORD ?? "",
+      database: WP_DB,
+      port: Number(process.env.WP_DB_PORT || process.env.DB_PORT || 3306),
+    });
+  } catch (err) {
+    if (err.code === "ER_DBACCESS_DENIED_ERROR" || err.code === "ER_ACCESS_DENIED_ERROR") {
+      console.error(
+        "\nCannot read WordPress DB. t2g_user usually has no access to buynfqw4_blogstech.\n" +
+          "Fix one of these:\n" +
+          "  1) Add to .env: WP_DB_USER=root and WP_DB_PASSWORD=... (MySQL root password)\n" +
+          "  2) Or grant access: GRANT SELECT ON buynfqw4_blogstech.* TO 't2g_user'@'localhost';\n",
+      );
+    }
+    throw err;
+  }
 
   const blogDbName = process.env.BLOG_DB_NAME || "tech2globe_blog";
   const app = await mysql.createConnection({
