@@ -10,8 +10,8 @@ async function sendTestMail() {
       port: Number(process.env.SMTP_PORT),
       secure: true,
       auth: {
-        user: process.env.SMTP_EMAIL,
-        pass: process.env.SMTP_PASSWORD,
+        user: process.env.SMTP_EMAIL || process.env.EMAIL_USER,
+        pass: process.env.SMTP_PASSWORD || process.env.EMAIL_PASSWORD,
       },
     });
 
@@ -19,8 +19,8 @@ async function sendTestMail() {
     console.log("SMTP is working ✅");
 
     const info = await transporter.sendMail({
-      from: `"Tech2Globe Test" <${process.env.SMTP_EMAIL}>`,
-      to: process.env.TEST_EMAIL,
+      from: `"Tech2Globe Test" <${process.env.SMTP_EMAIL || process.env.EMAIL_USER}>`,
+      to: process.env.TEST_EMAIL || process.env.SMTP_EMAIL || process.env.EMAIL_USER,
       subject: "Test Email",
       text: "Nodemailer is working successfully",
     });

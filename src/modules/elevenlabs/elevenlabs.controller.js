@@ -1,4 +1,4 @@
-import { transporter } from "../../utils/email.service.js";
+import { transporter, getSmtpFromAddress } from "../../utils/email.service.js";
 import {
   verifyElevenLabsSignature,
   parseTranscriptPayload,
@@ -20,9 +20,13 @@ export const handleTranscriptWebhook = async (req, res) => {
 
   const verification = verifyElevenLabsSignature(raw, signatureHeader, secret);
   if (!verification.ok) {
-    console.warn(`[elevenlabs] ${verification.message}`);
+    console.warn(
+      `[elevenlabs] rejected: ${verification.message} (body ${raw.length} bytes)`,
+    );
     return res.status(verification.status).send(verification.message);
   }
+
+  console.log("[elevenlabs] signature verified OK");
 
   let data;
   try {
@@ -37,10 +41,11 @@ export const handleTranscriptWebhook = async (req, res) => {
     process.env.ELEVENLABS_TRANSCRIPT_EMAIL ||
     process.env.OWNER_EMAILS?.split(",")[0]?.trim() ||
     "harpreet@tech2globe.com";
-  const from =
-    process.env.ELEVENLABS_FROM_EMAIL ||
-    process.env.SMTP_EMAIL ||
-    "no-reply@tech2globe.com";
+  const from = getSmtpFromAddress();
+  if (!from) {
+    console.error("[elevenlabs] no SMTP from address (set SMTP_EMAIL or EMAIL_USER)");
+    return res.status(500).send("Email sender not configured");
+  }
 
   const html = buildTranscriptEmailHtml({ conversationId, eventTs, formatted });
   const subject = buildTranscriptSubject(conversationId, eventTs);
@@ -57,6 +62,7 @@ export const handleTranscriptWebhook = async (req, res) => {
     );
   } catch (err) {
     console.error("[elevenlabs] email failed:", err.message);
+    return res.status(500).send("Email delivery failed");
   }
 
   return res.status(200).send("Processed");

@@ -13,7 +13,8 @@
     "fix:blog-authors": "node scripts/fix-blog-authors-from-wp.mjs",
     "report:legacy-blog-images": "node scripts/report-legacy-blog-images.mjs",
     "export:blog-seo": "node scripts/export-blog-seo-excel.mjs",
-    "test:mail": "node src/utils/testingmail.js"
+    "test:mail": "node src/utils/testingmail.js",
+    "test:elevenlabs": "node scripts/test-elevenlabs-email.mjs"
   },
   "keywords": [],
   "author": "",

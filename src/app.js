@@ -23,9 +23,37 @@ const allowedOrigins = [
   process.env.CLIENT_URL_ADMIN,
   process.env.CLIENT_URL_MAIN,
   process.env.CLIENT_URL_STAGE,
+  process.env.CLIENT_URL,
   "http://localhost:3000",
   "http://localhost:3001",
 ].filter(Boolean);
+
+const hostWithoutWww = (hostname) => hostname.replace(/^www\./i, "");
+
+/** Allow exact match, or same site with/without www (e.g. tech2globe.com vs www.tech2globe.com). */
+function isOriginAllowed(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  if (origin.endsWith(".amplifyapp.com")) return true;
+  if (origin.includes("ngrok-free.dev")) return true;
+
+  try {
+    const originHost = hostWithoutWww(new URL(origin).hostname);
+    return allowedOrigins.some((allowed) => {
+      try {
+        const allowedHost = hostWithoutWww(new URL(allowed).hostname);
+        return (
+          allowedHost === originHost &&
+          new URL(allowed).protocol === new URL(origin).protocol
+        );
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
 
 /**
  * ✅ CORS Configuration (FIXED)
@@ -34,15 +62,7 @@ const corsOptions = {
   origin: function (origin, callback) {
     console.log("Incoming origin:", origin);
 
-    // Allow requests with no origin (like Postman, curl, mobile apps)
-    if (!origin) return callback(null, true);
-
-    const isAllowed =
-      allowedOrigins.includes(origin) ||
-      origin.endsWith(".amplifyapp.com") ||
-      origin.includes("ngrok-free.dev");
-
-    if (isAllowed) {
+    if (isOriginAllowed(origin)) {
       return callback(null, true);
     }
 
@@ -61,11 +81,7 @@ app.use((req, res, next) => {
   if (req.method === "OPTIONS") {
     const origin = req.headers.origin;
 
-    const isAllowed =
-      !origin ||
-      allowedOrigins.includes(origin) ||
-      origin.endsWith(".amplifyapp.com") ||
-      origin.endsWith(".ngrok-free.dev");
+    const isAllowed = isOriginAllowed(origin);
 
     if (isAllowed) {
       if (origin) {

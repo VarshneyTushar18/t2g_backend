@@ -1,9 +1,20 @@
 import nodemailer from "nodemailer";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
 const smtpPort = Number(process.env.SMTP_PORT || 465);
 const smtpUser = (process.env.SMTP_EMAIL || process.env.EMAIL_USER || "").trim();
 const smtpPass = (process.env.SMTP_PASSWORD || process.env.EMAIL_PASSWORD || "").trim();
+
+export const getSmtpFromAddress = () =>
+  (
+    process.env.ELEVENLABS_FROM_EMAIL ||
+    process.env.SMTP_EMAIL ||
+    process.env.EMAIL_USER ||
+    ""
+  ).trim();
 
 export const transporter = nodemailer.createTransport({
   host: smtpHost,
