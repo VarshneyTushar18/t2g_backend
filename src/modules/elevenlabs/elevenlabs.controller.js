@@ -36,6 +36,17 @@ export const handleTranscriptWebhook = async (req, res) => {
     return res.status(400).send("Invalid JSON payload");
   }
 
+  const eventType = data.type || "unknown";
+  const agentId = data?.data?.agent_id || "n/a";
+  console.log(
+    `[elevenlabs] event=${eventType} agent=${agentId} conv=${data?.data?.conversation_id || "n/a"}`,
+  );
+
+  if (eventType !== "post_call_transcription") {
+    console.log(`[elevenlabs] ignored non-transcript event: ${eventType}`);
+    return res.status(200).send("Ignored");
+  }
+
   const { eventTs, conversationId, formatted } = parseTranscriptPayload(data);
   const to =
     process.env.ELEVENLABS_TRANSCRIPT_EMAIL ||
