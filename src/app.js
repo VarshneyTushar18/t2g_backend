@@ -12,6 +12,7 @@ import testimonialRoutes from "./modules/testimonials/testimonial.routes.js";
 import caseStudiesRoutes from "./modules/case-studies/caseStudies.routes.js";
 import blogRoutes from "./modules/blog/blog.routes.js";
 import elevenLabsRoutes from "./modules/elevenlabs/elevenlabs.routes.js";
+import elevenLabsFallbackRoutes from "./modules/elevenlabs/fallback/elevenlabs.fallback.routes.js";
 import { handleTranscriptWebhook } from "./modules/elevenlabs/elevenlabs.controller.js";
 
 const app = express();
@@ -124,6 +125,7 @@ app.post(
  * Body parsers
  */
 app.use(express.json());
+app.use("/api/elevenlabs/fallback", elevenLabsFallbackRoutes);
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
