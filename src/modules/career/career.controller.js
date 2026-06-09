@@ -5,11 +5,9 @@ import { transporter } from "../../utils/email.service.js";
 
 const HR_EMAILS = process.env.OWNER_EMAILS
   ? process.env.OWNER_EMAILS.split(",").map((e) => e.trim())
-  : [process.env.SMTP_EMAIL];
+  : [(process.env.SMTP_EMAIL || process.env.EMAIL_USER || "").trim()].filter(Boolean);
 
-/** PDFs from upload_stream live under /image/upload/; /raw/upload/ links 404. */
-const toResumeDownloadUrl = (url) =>
-  url ? url.replace("/raw/upload/", "/image/upload/") : null;
+const MAIL_FROM = (process.env.SMTP_EMAIL || process.env.EMAIL_USER || "").trim();
 
 // PUBLIC CONTROLLERS
 
@@ -88,8 +86,10 @@ export const submitApplication = async (req, res) => {
     }
 
     // ── Resume Path (Cloudinary URL) ──────────────────
-    const resumePath = req.file ? toResumeDownloadUrl(req.file.path) : null;
-    const resumeDownloadUrl = resumePath;
+    const resumePath = req.file ? req.file.path : null;
+
+    // Use Cloudinary URL as returned by uploader; converting image/raw can break links.
+    const resumeDownloadUrl = resumePath || null;
 
     // ── Save application ──────────────────────────────
     const appId = await CareerModel.createApplication(
@@ -117,7 +117,7 @@ export const submitApplication = async (req, res) => {
     // TO:   career@tech2globe.com, hr@tech2globe.com, rathiishita2004@gmail.com
     try {
       await transporter.sendMail({
-        from: `"Tech2Globe Careers" <${process.env.SMTP_EMAIL}>`,
+        from: `"Tech2Globe Careers" <${MAIL_FROM}>`,
         to: HR_EMAILS.join(","),   // ✅ all 3 HR emails
         replyTo: email,            // ✅ HR can reply directly to candidate
         subject: `Job Request - ${firstName} ${lastName}`,
@@ -154,7 +154,7 @@ export const submitApplication = async (req, res) => {
     // TO:   candidate's email
     try {
       await transporter.sendMail({
-        from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
+        from: `"Tech2Globe" <${MAIL_FROM}>`,
         to: email,
         subject: "Application Received – Tech2Globe",
         html: `
@@ -267,11 +267,6 @@ export const getAllApplications = async (req, res) => {
       page,
       limit,
     });
-    result.data = result.data.map((row) =>
-      row.resume_file
-        ? { ...row, resume_file: toResumeDownloadUrl(row.resume_file) }
-        : row
-    );
     res.json({ success: true, ...result });
   } catch (err) {
     console.error("getAllApplications error:", err);
@@ -284,9 +279,6 @@ export const getApplicationById = async (req, res) => {
   try {
     const app = await CareerModel.getApplicationById(req.params.id);
     if (!app) return res.status(404).json({ error: "Application not found" });
-    if (app.resume_file) {
-      app.resume_file = toResumeDownloadUrl(app.resume_file);
-    }
     res.json({ success: true, data: app });
   } catch (err) {
     console.error("getApplicationById error:", err);
