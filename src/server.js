@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import { testDBConnection } from "./config/db.js";
 import { testBlogDBConnection, isBlogDbReady } from "./config/blogDb.js";
 import { ensureBlogTables } from "./modules/blog/blog.setup.js";
+import { startPendingProcessor } from "./modules/elevenlabs/fallback/elevenlabs.fallback.service.js";
 
 dotenv.config();
 
@@ -26,4 +27,5 @@ app.get("/health", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  startPendingProcessor();
 });

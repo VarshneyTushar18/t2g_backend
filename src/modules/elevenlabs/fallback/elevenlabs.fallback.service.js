@@ -132,6 +132,28 @@ export async function notifyConversationEnded({ conversationId, agentId }) {
   return { queued: created || item.status === "pending", created, duplicate, item };
 }
 
+export async function processPendingIfAny() {
+  const pending = await listPending();
+  if (pending.length === 0) {
+    return { processed: 0, results: [] };
+  }
+  return processPendingConversations();
+}
+
+export function startPendingProcessor() {
+  const pollMs = Number(process.env.ELEVENLABS_FALLBACK_POLL_MS || 60000);
+
+  setInterval(() => {
+    void processPendingIfAny().catch((err) => {
+      console.error("[elevenlabs-fallback] periodic process error:", err.message);
+    });
+  }, pollMs);
+
+  console.log(
+    `[elevenlabs-fallback] pending processor started (every ${pollMs}ms)`,
+  );
+}
+
 export async function processPendingConversations() {
   const pending = await listPending();
   const results = [];
