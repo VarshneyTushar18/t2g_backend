@@ -70,11 +70,37 @@ export function verifyElevenLabsSignature(rawBody, signatureHeader, secret) {
   return { ok: true };
 }
 
-function getMessageText(item) {
-  if (item.message != null) return item.message;
-  if (item.text != null) return item.text;
-  if (item.content != null) return item.content;
-  return JSON.stringify(item);
+function extractMessageText(item) {
+  const candidates = [
+    item?.message,
+    item?.original_message,
+    item?.text,
+    item?.content,
+  ];
+
+  for (const value of candidates) {
+    if (value == null) continue;
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "object" && value !== null) {
+      const nested =
+        value.text ?? value.message ?? value.content ?? value.transcript;
+      if (typeof nested === "string" && nested.trim()) return nested.trim();
+    }
+  }
+
+  const multi = item?.multivoice_message;
+  if (typeof multi === "string" && multi.trim()) return multi.trim();
+  if (multi && typeof multi === "object") {
+    const nested = multi.text ?? multi.message ?? multi.content;
+    if (typeof nested === "string" && nested.trim()) return nested.trim();
+  }
+
+  return null;
+}
+
+/** Skip ElevenLabs workflow/tool-only rows that have no user-visible text. */
+function isDisplayableTranscriptItem(item) {
+  return extractMessageText(item) != null;
 }
 
 export function parseTranscriptPayload(data) {
@@ -109,27 +135,38 @@ export function parseTranscriptPayload(data) {
     }
   }
 
-  const formatted = transcriptArray.map((item) => {
-    const role = item.role ?? "unknown";
-    let msgText = getMessageText(item);
-    if (typeof msgText === "object") msgText = JSON.stringify(msgText);
+  const formatted = transcriptArray
+    .filter(isDisplayableTranscriptItem)
+    .map((item) => {
+      const role = item.role ?? "unknown";
+      const msgText = extractMessageText(item);
 
-    const timeInCall = Number.isFinite(item?.time_in_call_secs)
-      ? Number(item.time_in_call_secs)
-      : null;
+      const timeInCall = Number.isFinite(item?.time_in_call_secs)
+        ? Number(item.time_in_call_secs)
+        : null;
 
-    const absEpoch =
-      maxTime > 0 && timeInCall !== null
-        ? eventTs - (maxTime - timeInCall)
-        : eventTs;
+      const absEpoch =
+        maxTime > 0 && timeInCall !== null
+          ? eventTs - (maxTime - timeInCall)
+          : eventTs;
 
-    return {
-      role,
-      message: String(msgText),
-      local_time: formatLocalTime(absEpoch),
-      epoch: absEpoch,
-    };
-  });
+      return {
+        role,
+        message: String(msgText),
+        local_time: formatLocalTime(absEpoch),
+        epoch: absEpoch,
+      };
+    });
+
+  if (formatted.length === 0 && transcriptArray.length > 0) {
+    formatted.push({
+      role: "system",
+      message:
+        "Transcript contained only internal workflow steps. Open the link below for the full conversation.",
+      local_time: formatLocalTime(eventTs),
+      epoch: eventTs,
+    });
+  }
 
   return { eventTs, conversationId, formatted };
 }
