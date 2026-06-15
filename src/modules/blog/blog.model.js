@@ -108,7 +108,7 @@ export const getBlogSettings = async () => {
   };
 };
 
-export const getAllAdmin = async ({ page = 1, limit = 20, search = "" } = {}) => {
+export const getAllAdmin = async ({ page = 1, limit = 20, search = "", category = "" } = {}) => {
   const offset = (page - 1) * limit;
   const params = [];
   let where = "WHERE p.is_active = 1";
@@ -118,6 +118,15 @@ export const getAllAdmin = async ({ page = 1, limit = 20, search = "" } = {}) =>
       " AND (p.title LIKE ? OR p.slug LIKE ? OR p.excerpt LIKE ? OR p.meta_title LIKE ? OR p.focus_keyword LIKE ?)";
     const q = `%${search}%`;
     params.push(q, q, q, q, q);
+  }
+
+  const categoryId = Number(category);
+  if (categoryId) {
+    where += ` AND EXISTS (
+      SELECT 1 FROM blog_post_categories pc_f
+      WHERE pc_f.post_id = p.id AND pc_f.category_id = ?
+    )`;
+    params.push(categoryId);
   }
 
   const [[{ total }]] = await blogDb.query(
@@ -141,6 +150,32 @@ export const getAllAdmin = async ({ page = 1, limit = 20, search = "" } = {}) =>
       totalPages: Math.max(1, Math.ceil(total / limit)),
     },
   };
+};
+
+export const getAllPostsForExport = async ({ search = "", status = "" } = {}) => {
+  const params = [];
+  let where = "WHERE p.is_active = 1";
+
+  if (search) {
+    where +=
+      " AND (p.title LIKE ? OR p.slug LIKE ? OR p.excerpt LIKE ? OR p.meta_title LIKE ? OR p.focus_keyword LIKE ?)";
+    const q = `%${search}%`;
+    params.push(q, q, q, q, q);
+  }
+
+  if (status) {
+    where += " AND p.status = ?";
+    params.push(status);
+  }
+
+  const [rows] = await blogDb.query(
+    `${postSelect} ${where} ${groupByPost}
+     ORDER BY COALESCE(p.published_at, p.created_at) DESC
+     LIMIT 5000`,
+    params,
+  );
+
+  return rows.map(mapPostRow);
 };
 
 export const getPublishedPosts = async ({

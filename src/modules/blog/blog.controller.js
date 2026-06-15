@@ -1,4 +1,15 @@
 import * as model from "./blog.model.js";
+import {
+  SEO_EXPORT_HEADERS,
+  buildSeoExportRows,
+  seoExportRowToArray,
+} from "./blogExport.js";
+
+const csvEscape = (value) => {
+  const s = value == null ? "" : String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+};
 
 const stripHtml = (html = "") =>
   String(html)
@@ -130,8 +141,9 @@ export const getAllAdmin = async (req, res) => {
     const page = Math.max(Number(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
     const search = String(req.query.search || "").trim();
+    const category = String(req.query.category || "").trim();
 
-    const result = await model.getAllAdmin({ page, limit, search });
+    const result = await model.getAllAdmin({ page, limit, search, category });
 
     res.json({
       success: true,
@@ -141,6 +153,33 @@ export const getAllAdmin = async (req, res) => {
   } catch (err) {
     console.error("blog getAllAdmin error:", err);
     res.status(500).json({ error: "Failed to fetch blog posts" });
+  }
+};
+
+export const exportSeoCsv = async (req, res) => {
+  try {
+    const search = String(req.query.search || "").trim();
+    const status = String(req.query.status || "").trim();
+
+    const posts = await model.getAllPostsForExport({ search, status });
+    const rows = await buildSeoExportRows(posts);
+
+    const lines = [
+      SEO_EXPORT_HEADERS.join(","),
+      ...rows.map((row) => seoExportRowToArray(row).map(csvEscape).join(",")),
+    ];
+
+    const csv = `\uFEFF${lines.join("\n")}`;
+    const stamp = new Date().toISOString().slice(0, 10);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="blog-seo-export-${stamp}.csv"`,
+    );
+    return res.send(csv);
+  } catch (err) {
+    return handleBlogError(res, err, "blog exportSeoCsv error:");
   }
 };
 

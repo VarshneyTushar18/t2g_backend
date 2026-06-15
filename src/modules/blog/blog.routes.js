@@ -24,6 +24,7 @@ router.get("/editor-schema", ...adminBlog, controller.getPostEditorSchema);
 router.get("/tags", ...adminBlog, controller.getTags);
 
 router.get("/admin/list", ...adminBlog, controller.getAllAdmin);
+router.get("/admin/export", ...adminBlog, controller.exportSeoCsv);
 router.get("/admin/:id", ...adminBlog, controller.getById);
 
 router.post("/", ...adminBlog, blogUpload.single("featured_image"), controller.create);
