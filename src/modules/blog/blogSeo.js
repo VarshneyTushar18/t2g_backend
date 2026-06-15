@@ -23,6 +23,14 @@ const pick = (body, seo, key) => {
   return undefined;
 };
 
+const parseBool = (value) => {
+  if (value === true || value === 1 || value === "1" || value === "true") return true;
+  if (value === false || value === 0 || value === "0" || value === "false" || value == null || value === "") {
+    return false;
+  }
+  return Boolean(value);
+};
+
 export const normalizeSeoInput = (body = {}, post = {}) => {
   const seo = body.seo && typeof body.seo === "object" ? body.seo : {};
 
@@ -33,8 +41,8 @@ export const normalizeSeoInput = (body = {}, post = {}) => {
     meta_description: str(pick(body, seo, "meta_description")),
     focus_keyword: str(pick(body, seo, "focus_keyword")),
     canonical_url: str(pick(body, seo, "canonical_url")),
-    robots_noindex: Boolean(pick(body, seo, "robots_noindex")),
-    robots_nofollow: Boolean(pick(body, seo, "robots_nofollow")),
+    robots_noindex: parseBool(pick(body, seo, "robots_noindex")),
+    robots_nofollow: parseBool(pick(body, seo, "robots_nofollow")),
     og_title: str(pick(body, seo, "og_title")),
     og_description: str(pick(body, seo, "og_description")),
     og_image: str(pick(body, seo, "og_image") || post.featured_image),

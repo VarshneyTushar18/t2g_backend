@@ -14,10 +14,22 @@ const slugify = (text = "") =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
-const normalizePayload = (body = {}) => {
+const parseJsonField = (value, fallback) => {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return value;
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+
+const normalizePayload = (body = {}, file = null) => {
   const title = body.title?.trim() || "";
   const content = body.content || "";
   const slug = body.slug?.trim() || slugify(title);
+  const featured_image = file?.path || body.featured_image || "";
 
   return {
     title,
@@ -25,11 +37,11 @@ const normalizePayload = (body = {}) => {
     content,
     excerpt: body.excerpt || "",
     status: body.status || "draft",
-    featured_image: body.featured_image || "",
-    author_name: body.author_name || body.author || "Tech2globe",
-    categories: body.categories || body.category_ids || [],
-    seo: body.seo,
-    tags: body.tags,
+    featured_image,
+    author_name: (body.author_name || body.author || "Tech2globe").trim(),
+    categories: parseJsonField(body.categories ?? body.category_ids, []),
+    seo: parseJsonField(body.seo, undefined),
+    tags: parseJsonField(body.tags, undefined),
   };
 };
 
@@ -223,7 +235,7 @@ export const getPostEditorSchema = async (_req, res) => {
 
 export const create = async (req, res) => {
   try {
-    const payload = normalizePayload(req.body);
+    const payload = normalizePayload(req.body, req.file);
 
     if (!payload.title) {
       return res.status(400).json({ error: "Title is required" });
@@ -244,7 +256,7 @@ export const create = async (req, res) => {
 
 export const update = async (req, res) => {
   try {
-    const payload = normalizePayload(req.body);
+    const payload = normalizePayload(req.body, req.file);
 
     if (!payload.title) {
       return res.status(400).json({ error: "Title is required" });

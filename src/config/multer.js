@@ -138,3 +138,22 @@ export const caseStudiesUpload = multer({
   fileFilter: imageFilter,
   limits: { fileSize: FILE_LIMIT },
 });
+
+/* ===============================
+   BLOG STORAGE
+================================ */
+
+const blogStorage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => ({
+    folder: "tech2globe/blog",
+    allowed_formats: ["jpg", "jpeg", "png", "webp"],
+    public_id: Date.now() + "-" + file.originalname.replace(/\s+/g, "_"),
+  }),
+});
+
+export const blogUpload = multer({
+  storage: blogStorage,
+  fileFilter: imageFilter,
+  limits: { fileSize: FILE_LIMIT },
+});
