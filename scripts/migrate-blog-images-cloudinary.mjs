@@ -11,6 +11,8 @@
  *   node scripts/migrate-blog-images-cloudinary.mjs --featured-only
  *   node scripts/migrate-blog-images-cloudinary.mjs
  *   node scripts/migrate-blog-images-cloudinary.mjs --limit=10
+ *   node scripts/migrate-blog-images-cloudinary.mjs --uploads-dir=/var/www/blog/wp-content/uploads
+ *   node scripts/migrate-blog-images-cloudinary.mjs --use-default-on-fail
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -24,8 +26,19 @@ dotenv.config();
 
 const dryRun = process.argv.includes("--dry-run");
 const featuredOnly = process.argv.includes("--featured-only");
+const useDefaultOnFail = process.argv.includes("--use-default-on-fail");
 const limitArg = process.argv.find((a) => a.startsWith("--limit="));
+const uploadsDirArg = process.argv.find((a) => a.startsWith("--uploads-dir="));
 const limit = limitArg ? Number(limitArg.split("=")[1]) : 0;
+const uploadsDir = uploadsDirArg
+  ? path.resolve(uploadsDirArg.slice("--uploads-dir=".length))
+  : process.env.BLOG_UPLOADS_DIR
+    ? path.resolve(process.env.BLOG_UPLOADS_DIR)
+    : "";
+
+const DEFAULT_IMAGE =
+  process.env.BLOG_DEFAULT_FEATURED_IMAGE ||
+  "https://www.tech2globe.com/images/blog-bg.webp";
 
 const LEGACY_SQL = `(
   featured_image LIKE '%blog.tech2globe.com%'
@@ -35,6 +48,11 @@ const LEGACY_SQL = `(
   OR featured_image LIKE '%tech2globe.com/blog%'
   OR content LIKE '%tech2globe.com/blog%'
   OR og_image LIKE '%tech2globe.com/blog%'
+  OR twitter_image LIKE '%tech2globe.com/blog%'
+  OR featured_image LIKE '%www.tech2globe.com/wp-content%'
+  OR content LIKE '%www.tech2globe.com/wp-content%'
+  OR og_image LIKE '%www.tech2globe.com/wp-content%'
+  OR twitter_image LIKE '%www.tech2globe.com/wp-content%'
   OR featured_image LIKE '%res.cloudinary.com/wp-content%'
   OR content LIKE '%res.cloudinary.com/wp-content%'
   OR og_image LIKE '%res.cloudinary.com/wp-content%'
@@ -42,11 +60,26 @@ const LEGACY_SQL = `(
 )`;
 
 const IMG_IN_HTML =
-  /https?:\/\/(?:blog\.tech2globe\.com|(?:www\.)?tech2globe\.com\/blog)\/wp-content\/uploads\/[^"'\s)]+/gi;
+  /https?:\/\/(?:(?:blog|www)\.)?tech2globe\.com(?:\/blog)?\/wp-content\/uploads\/[^"'\s)]+/gi;
 
 const isLegacyUrl = (url = "") =>
   /blog\.tech2globe\.com/i.test(url) ||
-  /tech2globe\.com\/blog\/wp-content/i.test(url);
+  /tech2globe\.com\/blog\/wp-content/i.test(url) ||
+  /www\.tech2globe\.com\/wp-content/i.test(url) ||
+  /res\.cloudinary\.com\/wp-content/i.test(url);
+
+function wpContentRelativePath(url = "") {
+  const m = String(url).match(/\/wp-content\/uploads\/(.+)$/i);
+  return m ? m[1] : null;
+}
+
+function localFileForUrl(url) {
+  if (!uploadsDir) return null;
+  const rel = wpContentRelativePath(url);
+  if (!rel) return null;
+  const filePath = path.join(uploadsDir, rel);
+  return fs.existsSync(filePath) ? filePath : null;
+}
 
 function collectUrls(row, set) {
   for (const field of ["featured_image", "og_image", "twitter_image"]) {
@@ -106,7 +139,7 @@ async function downloadBuffer(url) {
   throw lastErr || new Error("Could not download image from any host");
 }
 
-async function uploadBuffer(buffer, oldUrl) {
+async function uploadBuffer(buffer) {
   const compressed = await sharp(buffer)
     .rotate()
     .resize({ width: 2000, withoutEnlargement: true })
@@ -130,7 +163,17 @@ async function uploadBuffer(buffer, oldUrl) {
   });
 }
 
+async function uploadFromLocalFile(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  return uploadBuffer(buffer);
+}
+
 async function uploadToCloudinary(remoteUrl) {
+  const localFile = localFileForUrl(remoteUrl);
+  if (localFile) {
+    return uploadFromLocalFile(localFile);
+  }
+
   try {
     const result = await cloudinary.uploader.upload(remoteUrl, {
       folder: "tech2globe/blog",
@@ -140,13 +183,15 @@ async function uploadToCloudinary(remoteUrl) {
     });
     return result.secure_url;
   } catch (err) {
-    const tooLarge =
-      /too large|File size|max.*10/i.test(err.message || "") ||
-      err.http_code === 400;
-    if (!tooLarge) throw err;
+    const retry =
+      /too large|File size|max.*10|404|not found|Resource not found/i.test(
+        err.message || "",
+      ) || err.http_code === 400 || err.http_code === 404;
+
+    if (!retry) throw err;
 
     const buffer = await downloadBuffer(remoteUrl);
-    return uploadBuffer(buffer, remoteUrl);
+    return uploadBuffer(buffer);
   }
 }
 
@@ -174,6 +219,8 @@ const failLog = path.join(process.cwd(), "scripts", "blog-image-migration-failed
 console.log(`Posts to update: ${rows.length}`);
 console.log(`Unique legacy image URLs: ${urlSet.size}`);
 console.log(`Will process: ${urls.length}${featuredOnly ? " (featured/SEO only)" : ""}`);
+if (uploadsDir) console.log(`Local uploads dir: ${uploadsDir}`);
+if (useDefaultOnFail) console.log(`On fail: use default image ${DEFAULT_IMAGE}`);
 if (dryRun) console.log("(dry run)\n");
 
 const urlMap = new Map();
@@ -248,6 +295,32 @@ if (!dryRun) {
   );
 
   console.log(`Updated ${updated} posts in DB.`);
+
+  if (useDefaultOnFail) {
+    let defaulted = 0;
+    const [stillBroken] = await conn.query(
+      `SELECT id, featured_image, og_image, twitter_image FROM blog_posts
+       WHERE status = 'publish' AND (
+         featured_image LIKE '%blog.tech2globe.com%'
+         OR featured_image LIKE '%tech2globe.com/blog%'
+         OR featured_image LIKE '%www.tech2globe.com/wp-content%'
+         OR featured_image LIKE '%res.cloudinary.com/wp-content%'
+         OR featured_image IS NULL OR featured_image = ''
+       )`,
+    );
+    for (const row of stillBroken) {
+      await conn.query(
+        `UPDATE blog_posts
+         SET featured_image = ?, og_image = COALESCE(NULLIF(og_image, ''), ?),
+             twitter_image = COALESCE(NULLIF(twitter_image, ''), ?)
+         WHERE id = ?`,
+        [DEFAULT_IMAGE, DEFAULT_IMAGE, DEFAULT_IMAGE, row.id],
+      );
+      defaulted++;
+    }
+    console.log(`Set default featured image on ${defaulted} posts with missing/broken images.`);
+  }
+
   console.log("Restart backend after migration.");
 }
 

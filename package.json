@@ -15,6 +15,7 @@
     "migrate:blog-image-host": "node scripts/migrate-blog-image-host.mjs",
     "migrate:blog-images-cloudinary": "node scripts/migrate-blog-images-cloudinary.mjs",
     "fix:malformed-blog-images": "node scripts/fix-malformed-blog-image-urls.mjs",
+    "assign:default-blog-images": "node scripts/assign-default-blog-images.mjs",
     "export:blog-seo": "node scripts/export-blog-seo-excel.mjs",
     "test:mail": "node src/utils/testingmail.js",
     "test:elevenlabs": "node scripts/test-elevenlabs-email.mjs"
