@@ -1,5 +1,7 @@
 /** Blog-only HTML helpers. Does not use blog.tech2globe.com. */
 
+const LEGACY_BLOG_HOST = /https?:\/\/blog\.tech2globe\.com/gi;
+
 const siteBase = (settings = {}) =>
   (
     settings.media_base_url ||
@@ -8,11 +10,19 @@ const siteBase = (settings = {}) =>
     "https://www.tech2globe.com"
   ).replace(/\/$/, "");
 
+/** Point old WordPress host URLs at the current media base (www or Cloudinary). */
+export const rewriteLegacyBlogHost = (url = "", settings = {}) => {
+  if (!url || typeof url !== "string") return url;
+  const base = siteBase(settings);
+  return url.replace(LEGACY_BLOG_HOST, base);
+};
+
 export const rewriteBlogContentHtml = (html = "", settings = {}) => {
   if (!html || typeof html !== "string") return html;
 
   const base = siteBase(settings);
-  return html.replace(
+  let out = rewriteLegacyBlogHost(html, settings);
+  return out.replace(
     /src=(["'])(\/(?!\/)[^"']+)\1/gi,
     (_, q, path) => `src=${q}${base}${path}${q}`,
   );
@@ -20,7 +30,7 @@ export const rewriteBlogContentHtml = (html = "", settings = {}) => {
 
 export const normalizeFeaturedImage = (url, settings = {}) => {
   if (!url || typeof url !== "string") return "";
-  const trimmed = url.trim();
+  const trimmed = rewriteLegacyBlogHost(url.trim(), settings);
   if (!trimmed) return settings.default_featured_image || "";
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
     return trimmed;

@@ -1,5 +1,7 @@
 /** Per-post SEO (Yoast-style). Empty fields are filled from post defaults on read. */
 
+import { rewriteLegacyBlogHost } from "./blogMedia.js";
+
 export const SEO_FIELD_KEYS = [
   "meta_title",
   "meta_description",
@@ -60,7 +62,10 @@ export const resolveSeoForOutput = (stored = {}, post = {}, settings = {}) => {
   const title = stored.meta_title || post.title || "";
   const description =
     stored.meta_description || post.excerpt || "";
-  const image = stored.og_image || post.featured_image || settings.default_featured_image || "";
+  const image = rewriteLegacyBlogHost(
+    stored.og_image || post.featured_image || settings.default_featured_image || "",
+    settings,
+  );
 
   return {
     meta_title: title,
@@ -72,11 +77,14 @@ export const resolveSeoForOutput = (stored = {}, post = {}, settings = {}) => {
     robots: `${stored.robots_noindex ? "noindex" : "index"}, ${stored.robots_nofollow ? "nofollow" : "follow"}`,
     og_title: stored.og_title || title,
     og_description: stored.og_description || description,
-    og_image: stored.og_image || image,
+    og_image: rewriteLegacyBlogHost(stored.og_image || image, settings),
     twitter_title: stored.twitter_title || stored.og_title || title,
     twitter_description:
       stored.twitter_description || stored.og_description || description,
-    twitter_image: stored.twitter_image || stored.og_image || image,
+    twitter_image: rewriteLegacyBlogHost(
+      stored.twitter_image || stored.og_image || image,
+      settings,
+    ),
   };
 };
 
