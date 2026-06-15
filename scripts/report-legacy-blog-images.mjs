@@ -1,6 +1,6 @@
 /**
- * List posts that still reference blog.tech2globe.com in featured_image or content.
- * Run: node scripts/report-legacy-blog-images.mjs
+ * Report all legacy blog image URL patterns still in DB.
+ * Run: npm run report:legacy-blog-images
  */
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
@@ -14,28 +14,34 @@ const conn = await mysql.createConnection({
   database: process.env.BLOG_DB_NAME || "tech2globe_blog",
 });
 
-const pattern = "%blog.tech2globe.com%";
+const patterns = [
+  { name: "blog.tech2globe.com (featured)", sql: "featured_image LIKE '%blog.tech2globe.com%'" },
+  { name: "tech2globe.com/blog (featured)", sql: "featured_image LIKE '%tech2globe.com/blog%'" },
+  { name: "cloudinary (featured)", sql: "featured_image LIKE '%res.cloudinary.com%'" },
+  { name: "empty featured", sql: "(featured_image IS NULL OR featured_image = '') AND status='publish'" },
+  { name: "blog.tech2globe.com (content)", sql: "content LIKE '%blog.tech2globe.com%'" },
+  { name: "tech2globe.com/blog (content)", sql: "content LIKE '%tech2globe.com/blog%'" },
+];
 
-const [[feat]] = await conn.query(
-  `SELECT COUNT(*) AS c FROM blog_posts WHERE featured_image LIKE ?`,
-  [pattern],
-);
-const [[content]] = await conn.query(
-  `SELECT COUNT(*) AS c FROM blog_posts WHERE content LIKE ?`,
-  [pattern],
-);
-
-console.log(`Posts with legacy featured_image URL: ${feat.c}`);
-console.log(`Posts with legacy URLs in content HTML: ${content.c}`);
-console.log(
-  "\nUpdate these in Admin → Blog (use Cloudinary URLs) or bulk-replace in DB.",
-);
-console.log("The app no longer depends on blog.tech2globe.com in code.\n");
+console.log("Blog image URL report\n");
+for (const p of patterns) {
+  const [[row]] = await conn.query(`SELECT COUNT(*) AS c FROM blog_posts WHERE ${p.sql}`);
+  console.log(`  ${p.name}: ${row.c}`);
+}
 
 const [samples] = await conn.query(
-  `SELECT id, title, featured_image FROM blog_posts WHERE featured_image LIKE ? LIMIT 5`,
-  [pattern],
+  `SELECT id, slug, featured_image FROM blog_posts
+   WHERE featured_image LIKE '%tech2globe.com/blog%'
+      OR featured_image LIKE '%blog.tech2globe.com%'
+   LIMIT 8`,
 );
-samples.forEach((r) => console.log(`- [${r.id}] ${r.title?.slice(0, 50)}`));
+if (samples.length) {
+  console.log("\nSample posts still on legacy hosts:");
+  samples.forEach((r) =>
+    console.log(`  - [${r.id}] ${r.slug}\n    ${r.featured_image}`),
+  );
+} else {
+  console.log("\nNo legacy featured_image URLs — good.");
+}
 
 await conn.end();

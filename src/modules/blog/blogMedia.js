@@ -1,6 +1,7 @@
 /** Blog-only HTML helpers. Does not use blog.tech2globe.com. */
 
-const LEGACY_BLOG_HOST = /https?:\/\/blog\.tech2globe\.com/gi;
+const LEGACY_BLOG_HOST =
+  /https?:\/\/(?:blog\.tech2globe\.com|(?:www\.)?tech2globe\.com\/blog)/gi;
 
 const siteBase = (settings = {}) =>
   (
@@ -10,10 +11,20 @@ const siteBase = (settings = {}) =>
     "https://www.tech2globe.com"
   ).replace(/\/$/, "");
 
-/** Point old WordPress host URLs at the current media base (www or Cloudinary). */
+/** Point old WordPress host URLs at the main site — never bare res.cloudinary.com. */
 export const rewriteLegacyBlogHost = (url = "", settings = {}) => {
   if (!url || typeof url !== "string") return url;
+  if (/^https?:\/\/res\.cloudinary\.com\/image\//i.test(url)) return url;
+  if (/^https?:\/\/res\.cloudinary\.com\/wp-content\//i.test(url)) {
+    return url.replace(
+      /^https?:\/\/res\.cloudinary\.com/i,
+      "https://blog.tech2globe.com",
+    );
+  }
   const base = siteBase(settings);
+  if (/^https?:\/\/res\.cloudinary\.com\/?$/i.test(base)) {
+    return url.replace(LEGACY_BLOG_HOST, "https://www.tech2globe.com");
+  }
   return url.replace(LEGACY_BLOG_HOST, base);
 };
 
