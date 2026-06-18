@@ -25,6 +25,7 @@ const allowedOrigins = [
   process.env.CLIENT_URL_MAIN,
   process.env.CLIENT_URL_STAGE,
   process.env.CLIENT_URL,
+  "https://tech2globe.com",
   "http://localhost:3000",
   "http://localhost:3001",
 ].filter(Boolean);
