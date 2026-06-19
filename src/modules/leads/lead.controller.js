@@ -12,6 +12,41 @@ const validateEmail = (email) => {
 
 const sanitize = (value) => (value ? String(value).trim() : null);
 
+const formatCountryFromGeo = (geo) => {
+  if (!geo?.country_name) return null;
+  const dialCode = geo.country_calling_code
+    ? ` (+${geo.country_calling_code})`
+    : "";
+  return `${geo.country_name}${dialCode}`;
+};
+
+const normalizeCountryName = (value) => {
+  if (!value) return "";
+  const name = String(value)
+    .replace(/\s*\(\+\d+\)\s*$/g, "")
+    .trim()
+    .toLowerCase();
+
+  const aliases = {
+    usa: "united states",
+    uae: "united arab emirates",
+    uk: "united kingdom",
+  };
+
+  return aliases[name] || name;
+};
+
+const countriesMatch = (formCountry, geoCountryName) => {
+  if (!formCountry || !geoCountryName) return false;
+  const formName = normalizeCountryName(formCountry);
+  const geoName = normalizeCountryName(geoCountryName);
+  return (
+    formName === geoName ||
+    geoName.includes(formName) ||
+    formName.includes(geoName)
+  );
+};
+
 // ================= LEAD EMAIL LIST =================
 
 const LEAD_EMAILS = ["info@tech2globe.com", "enquiries@tech2globe.net"];
@@ -99,18 +134,28 @@ export const createLead = async (req, res) => {
     // ===== LOCATION LOOKUP =====
 
     let location = "Unknown";
+    let geo = null;
+    let countryFromIp = null;
 
     try {
       const geoResponse = await axios.get(
         `https://ipapi.co/${ip}/json/`,
       );
 
-      const geo = geoResponse.data;
+      geo = geoResponse.data;
 
       location = `${geo.city || "-"}, ${geo.region || "-"}, ${geo.country_name || "-"}`;
+      countryFromIp = formatCountryFromGeo(geo);
     } catch (error) {
       console.log("Geo lookup failed:", error.message);
     }
+
+    const countrySelected = country;
+    const countryForRecord = countryFromIp || countrySelected;
+    const countryMismatch =
+      countrySelected &&
+      countryFromIp &&
+      !countriesMatch(countrySelected, geo?.country_name);
 
     // ===== DB INSERT =====
 
@@ -120,7 +165,15 @@ export const createLead = async (req, res) => {
       (name, email, country, phone, message, form_type, source_page)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
-      [name, email, country, phone, message, form_type, source_page],
+      [
+        name,
+        email,
+        countryForRecord,
+        phone,
+        message,
+        form_type,
+        source_page,
+      ],
     );
 
     // ================= MAIL 1: TO LEAD TEAM =================
@@ -158,7 +211,13 @@ export const createLead = async (req, res) => {
 
             <p><strong>Phone:</strong> ${phone || "-"}</p>
 
-            <p><strong>Country:</strong> ${country || "-"}</p>
+            <p><strong>Country:</strong> ${countryForRecord || "-"}</p>
+
+            ${
+              countryMismatch
+                ? `<p><strong>Country (form selection):</strong> ${countrySelected}</p>`
+                : ""
+            }
 
             <p><strong>Location:</strong> ${location}</p>
 
@@ -235,7 +294,7 @@ export const createLead = async (req, res) => {
 
             <p><strong>Phone:</strong> ${phone || "-"}</p>
 
-            <p><strong>Country:</strong> ${country || "-"}</p>
+            <p><strong>Country:</strong> ${countrySelected || countryForRecord || "-"}</p>
 
             <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
 
