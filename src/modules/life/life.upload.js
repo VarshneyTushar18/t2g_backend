@@ -15,7 +15,7 @@ export const handleLifeGalleryUpload =
       if (err instanceof multer.MulterError) {
         if (err.code === "LIMIT_FILE_SIZE") {
           return res.status(400).json({
-            error: "Each image must be 5MB or smaller",
+            error: "Each image must be 10MB or smaller",
           });
         }
         if (err.code === "LIMIT_FILE_COUNT") {

@@ -87,7 +87,7 @@ export const imageUpload = multer({
 
 /** Max gallery images per request (+1 slot for banner on create/update). */
 export const LIFE_GALLERY_MAX_FILES = 150;
-const LIFE_GALLERY_FILE_SIZE = 5 * 1024 * 1024; // 5MB per image (before compression)
+const LIFE_GALLERY_FILE_SIZE = 10 * 1024 * 1024; // 10MB per image (before compression)
 
 const lifeGalleryMemoryStorage = multer.memoryStorage();
 
