@@ -1,4 +1,5 @@
 import blogDb from "../../config/blogDb.js";
+import { buildPublishedCategoryFilter } from "./blogCategoryGroups.js";
 import { normalizeFeaturedImage, rewriteBlogContentHtml } from "./blogMedia.js";
 import {
   mapSeoFromRow,
@@ -191,15 +192,11 @@ export const getPublishedPosts = async ({
   let where = "WHERE p.status = 'publish' AND p.is_active = 1";
 
   if (category) {
-    const normalized = String(category).trim();
-    where += ` AND EXISTS (
-      SELECT 1
-      FROM blog_post_categories pc2
-      INNER JOIN blog_categories c2 ON c2.id = pc2.category_id
-      WHERE pc2.post_id = p.id
-        AND (c2.slug = ? OR c2.name = ?)
-    )`;
-    params.push(normalized, normalized.replace(/-/g, " "));
+    const categoryFilter = buildPublishedCategoryFilter(category);
+    if (categoryFilter) {
+      where += categoryFilter.sql;
+      params.push(...categoryFilter.params);
+    }
   }
 
   if (search) {

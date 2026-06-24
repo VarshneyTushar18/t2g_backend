@@ -1,13 +1,20 @@
 import pool from "../../config/db.js";
+import { resolveMediaUrl, resolveMediaUrls } from "../../utils/mediaUrl.js";
 
 // ── HELPER ──────────────────────────────────────────
-const parseGallery = (row) => ({
-  ...row,
-  gallery:
+const parseGallery = (row) => {
+  const gallery =
     typeof row.gallery === "string"
       ? JSON.parse(row.gallery)
-      : row.gallery || [],
-});
+      : row.gallery || [];
+
+  return {
+    ...row,
+    banner: resolveMediaUrl(row.banner),
+    category_img: resolveMediaUrl(row.category_img),
+    gallery: resolveMediaUrls(gallery),
+  };
+};
 
 // ── PUBLIC ──────────────────────────────────────────
 
