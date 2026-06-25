@@ -3,6 +3,12 @@
 import pool from "../../config/db.js";
 import { transporter } from "../../utils/email.service.js";
 import axios from "axios";
+import {
+  getShopifyIntakes,
+  getShopifyIntakeById,
+  exportShopifyIntakes,
+  deleteShopifyIntake,
+} from "./shopify-intake/shopifyIntake.controller.js";
 
 // ================= COMMON HELPERS =================
 
@@ -371,6 +377,10 @@ const buildLeadFilters = (query) => {
 // ================= GET ALL LEADS =================
 
 export const getLeads = async (req, res) => {
+  if (sanitize(req.query.form_type) === "shopify_intake") {
+    return getShopifyIntakes(req, res);
+  }
+
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
@@ -418,6 +428,10 @@ const csvEscape = (value) => {
 };
 
 export const exportLeads = async (req, res) => {
+  if (sanitize(req.query.form_type) === "shopify_intake") {
+    return exportShopifyIntakes(req, res);
+  }
+
   try {
     const { where, params } = buildLeadFilters(req.query);
     const maxRows = 10000;
@@ -482,6 +496,10 @@ export const exportLeads = async (req, res) => {
 // ================= GET LEAD BY ID =================
 
 export const getLeadById = async (req, res) => {
+  if (sanitize(req.query.form_type) === "shopify_intake") {
+    return getShopifyIntakeById(req, res);
+  }
+
   try {
     const id = Number(req.params.id);
 
@@ -490,6 +508,14 @@ export const getLeadById = async (req, res) => {
         success: false,
         message: "Invalid ID",
       });
+    }
+
+    const [shopifyRows] = await pool.execute(
+      `SELECT * FROM shopify_intake_leads WHERE id = ?`,
+      [id],
+    );
+    if (shopifyRows.length) {
+      return getShopifyIntakeById(req, res);
     }
 
     const [rows] = await pool.execute(`SELECT * FROM leads WHERE id = ?`, [id]);
@@ -515,6 +541,14 @@ export const deleteLead = async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ success: false });
+
+    const [shopifyRows] = await pool.execute(
+      `SELECT id FROM shopify_intake_leads WHERE id = ?`,
+      [id],
+    );
+    if (shopifyRows.length) {
+      return deleteShopifyIntake(req, res);
+    }
 
     const [result] = await pool.execute(`DELETE FROM leads WHERE id = ?`, [id]);
 
