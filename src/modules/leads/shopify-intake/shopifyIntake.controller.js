@@ -266,7 +266,7 @@ export const createShopifyIntake = async (req, res) => {
 export const getShopifyIntakes = async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 10000);
     const offset = (page - 1) * limit;
     const { where, params } = buildFilters(req.query);
 
