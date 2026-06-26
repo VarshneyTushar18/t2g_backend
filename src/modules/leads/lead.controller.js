@@ -9,6 +9,12 @@ import {
   exportShopifyIntakes,
   deleteShopifyIntake,
 } from "./shopify-intake/shopifyIntake.controller.js";
+import {
+  getAmazonOnboardings,
+  getAmazonOnboardingById,
+  exportAmazonOnboardings,
+  deleteAmazonOnboarding,
+} from "./amazon-onboarding/amazonOnboarding.controller.js";
 
 // ================= COMMON HELPERS =================
 
@@ -380,6 +386,9 @@ export const getLeads = async (req, res) => {
   if (sanitize(req.query.form_type) === "shopify_intake") {
     return getShopifyIntakes(req, res);
   }
+  if (sanitize(req.query.form_type) === "amazon_onboarding") {
+    return getAmazonOnboardings(req, res);
+  }
 
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
@@ -430,6 +439,9 @@ const csvEscape = (value) => {
 export const exportLeads = async (req, res) => {
   if (sanitize(req.query.form_type) === "shopify_intake") {
     return exportShopifyIntakes(req, res);
+  }
+  if (sanitize(req.query.form_type) === "amazon_onboarding") {
+    return exportAmazonOnboardings(req, res);
   }
 
   try {
@@ -499,6 +511,9 @@ export const getLeadById = async (req, res) => {
   if (sanitize(req.query.form_type) === "shopify_intake") {
     return getShopifyIntakeById(req, res);
   }
+  if (sanitize(req.query.form_type) === "amazon_onboarding") {
+    return getAmazonOnboardingById(req, res);
+  }
 
   try {
     const id = Number(req.params.id);
@@ -516,6 +531,14 @@ export const getLeadById = async (req, res) => {
     );
     if (shopifyRows.length) {
       return getShopifyIntakeById(req, res);
+    }
+
+    const [amazonRows] = await pool.execute(
+      `SELECT * FROM amazon_onboarding_leads WHERE id = ?`,
+      [id],
+    );
+    if (amazonRows.length) {
+      return getAmazonOnboardingById(req, res);
     }
 
     const [rows] = await pool.execute(`SELECT * FROM leads WHERE id = ?`, [id]);
@@ -548,6 +571,14 @@ export const deleteLead = async (req, res) => {
     );
     if (shopifyRows.length) {
       return deleteShopifyIntake(req, res);
+    }
+
+    const [amazonRows] = await pool.execute(
+      `SELECT id FROM amazon_onboarding_leads WHERE id = ?`,
+      [id],
+    );
+    if (amazonRows.length) {
+      return deleteAmazonOnboarding(req, res);
     }
 
     const [result] = await pool.execute(`DELETE FROM leads WHERE id = ?`, [id]);
