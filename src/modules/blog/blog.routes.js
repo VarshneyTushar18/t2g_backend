@@ -3,6 +3,7 @@ import * as controller from "./blog.controller.js";
 import { guardModule } from "../auth/auth.middleware.js";
 import { requireBlogDb } from "../../middleware/requireBlogDb.js";
 import { blogUpload } from "../../config/multer.js";
+import { handleBlogUpload } from "./blog.upload.js";
 
 const router = express.Router();
 const adminBlog = guardModule("blog");
@@ -25,10 +26,16 @@ router.get("/tags", ...adminBlog, controller.getTags);
 
 router.get("/admin/list", ...adminBlog, controller.getAllAdmin);
 router.get("/admin/export", ...adminBlog, controller.exportSeoCsv);
+router.post(
+  "/admin/upload-featured",
+  ...adminBlog,
+  handleBlogUpload(blogUpload.single("featured_image")),
+  controller.uploadFeatured,
+);
 router.get("/admin/:id", ...adminBlog, controller.getById);
 
-router.post("/", ...adminBlog, blogUpload.single("featured_image"), controller.create);
-router.put("/:id", ...adminBlog, blogUpload.single("featured_image"), controller.update);
+router.post("/", ...adminBlog, controller.create);
+router.put("/:id", ...adminBlog, controller.update);
 router.delete("/:id", ...adminBlog, controller.remove);
 
 export default router;

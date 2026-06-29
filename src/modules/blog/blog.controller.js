@@ -4,6 +4,7 @@ import {
   buildSeoExportRows,
   seoExportRowToArray,
 } from "./blogExport.js";
+import zlib from "node:zlib";
 
 const csvEscape = (value) => {
   const s = value == null ? "" : String(value);
@@ -36,9 +37,26 @@ const parseJsonField = (value, fallback) => {
   }
 };
 
+const decodeContent = (body = {}) => {
+  const raw = body.content ?? "";
+  if (body.content_encoding === "gzip" && raw) {
+    try {
+      return zlib.gunzipSync(Buffer.from(String(raw), "base64")).toString("utf8");
+    } catch {
+      throw Object.assign(new Error("Invalid compressed content"), { status: 400 });
+    }
+  }
+  return raw;
+};
+
 const normalizePayload = (body = {}, file = null) => {
   const title = body.title?.trim() || "";
-  const content = body.content || "";
+  let content;
+  try {
+    content = decodeContent(body);
+  } catch (err) {
+    throw err;
+  }
   const slug = body.slug?.trim() || slugify(title);
   const featured_image = file?.path || body.featured_image || "";
 
@@ -272,6 +290,17 @@ export const getPostEditorSchema = async (_req, res) => {
   });
 };
 
+export const uploadFeatured = async (req, res) => {
+  try {
+    if (!req.file?.path) {
+      return res.status(400).json({ error: "Image file is required" });
+    }
+    res.json({ success: true, url: req.file.path });
+  } catch (err) {
+    return handleBlogError(res, err, "blog uploadFeatured error:");
+  }
+};
+
 export const create = async (req, res) => {
   try {
     const payload = normalizePayload(req.body, req.file);
@@ -289,6 +318,9 @@ export const create = async (req, res) => {
     const data = await model.createPost(payload);
     res.json({ success: true, message: "Blog post created", data });
   } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
     return handleBlogError(res, err, "blog create error:");
   }
 };
@@ -315,6 +347,9 @@ export const update = async (req, res) => {
 
     res.json({ success: true, message: "Blog post updated", data });
   } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
     return handleBlogError(res, err, "blog update error:");
   }
 };

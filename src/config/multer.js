@@ -7,7 +7,13 @@ import path from "node:path";
    COMMON LIMIT
 ================================ */
 
-const FILE_LIMIT = 2 * 1024 * 1024; // 2MB
+const FILE_LIMIT = 2 * 1024 * 1024; // 2MB (testimonials, portfolio, case studies, resumes)
+
+/** Blog posts: large HTML content field + featured image. */
+export const BLOG_UPLOAD_LIMITS = {
+  fileSize: 10 * 1024 * 1024, // 10MB featured image
+  fieldSize: 50 * 1024 * 1024, // 50MB HTML / SEO JSON in multipart fields
+};
 
 /* ===============================
    RESUME STORAGE (PDF / DOC)
@@ -155,5 +161,5 @@ const blogStorage = new CloudinaryStorage({
 export const blogUpload = multer({
   storage: blogStorage,
   fileFilter: imageFilter,
-  limits: { fileSize: FILE_LIMIT },
+  limits: BLOG_UPLOAD_LIMITS,
 });
