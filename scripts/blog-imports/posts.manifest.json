@@ -1,0 +1,30 @@
+[
+  {
+    "docx": "GEO_AI_Search_India_Article 1.docx",
+    "slug": "5-surprising-truths-about-geo-ai-search-india",
+    "featured": "featured/geo-ai-search-india.png",
+    "categories": ["SEO & AI", "Digital Marketing"],
+    "author_name": "Tech2Globe Digital Team",
+    "focus_keyword": "GEO AI search India",
+    "status": "publish"
+  },
+  {
+    "docx": "Top_10_Amazon_Agencies_USA_Blog.docx",
+    "slug": "top-10-amazon-agencies-in-usa",
+    "featured": "featured/top-10-amazon-agencies-usa.png",
+    "categories": ["Amazon", "Digital Marketing"],
+    "author_name": "Tech2Globe Digital Team",
+    "focus_keyword": "Amazon agencies USA",
+    "status": "publish"
+  },
+  {
+    "docx": "Top_10_Walmart_Agencies_USA_Blog (1).docx",
+    "slug": "top-10-walmart-agencies-in-usa",
+    "title": "Top 10 Walmart Agencies in USA: Your Complete Guide to Finding the Best Walmart Advertising Partners",
+    "featured": "",
+    "categories": ["Walmart", "E-commerce"],
+    "author_name": "Tech2Globe Digital Team",
+    "focus_keyword": "Walmart agencies USA",
+    "status": "publish"
+  }
+]

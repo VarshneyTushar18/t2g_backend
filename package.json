@@ -17,6 +17,7 @@
     "fix:malformed-blog-images": "node scripts/fix-malformed-blog-image-urls.mjs",
     "assign:default-blog-images": "node scripts/assign-default-blog-images.mjs",
     "export:blog-seo": "node scripts/export-blog-seo-excel.mjs",
+    "import:docx-blogs": "node scripts/import-docx-blogs.mjs",
     "test:mail": "node src/utils/testingmail.js",
     "test:elevenlabs": "node scripts/test-elevenlabs-email.mjs"
   },
@@ -43,6 +44,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "mammoth": "^1.12.0",
     "nodemon": "^3.1.14",
     "xlsx": "^0.18.5"
   }
