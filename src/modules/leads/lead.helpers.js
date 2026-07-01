@@ -7,15 +7,23 @@ export const sanitize = (value) => (value ? String(value).trim() : null);
 export const validateEmail = (email) =>
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-export const verifyTurnstile = async (captchaToken, ip) => {
+export const verifyTurnstile = async (
+  captchaToken,
+  ip,
+  secret = process.env.TURNSTILE_SECRET_KEY,
+) => {
   if (!captchaToken) {
     return { ok: false, message: "Captcha required" };
+  }
+
+  if (!secret) {
+    return { ok: false, message: "Captcha not configured" };
   }
 
   const verifyResponse = await axios.post(
     "https://challenges.cloudflare.com/turnstile/v0/siteverify",
     new URLSearchParams({
-      secret: process.env.TURNSTILE_SECRET_KEY,
+      secret,
       response: captchaToken,
       remoteip: ip,
     }),

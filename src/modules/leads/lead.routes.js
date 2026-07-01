@@ -8,6 +8,7 @@ import {
 } from "../leads/lead.controller.js";
 import shopifyIntakeRoutes from "./shopify-intake/shopifyIntake.routes.js";
 import amazonOnboardingRoutes from "./amazon-onboarding/amazonOnboarding.routes.js";
+import amazonLeadsRoutes from "./amazon-leads/amazonLeads.routes.js";
 
 import { validateLead } from "../../middleware/validation.js";
 import { guardModule } from "../auth/auth.middleware.js";
@@ -17,6 +18,7 @@ const adminLeads = guardModule("leads");
 
 router.use("/shopify-intake", shopifyIntakeRoutes);
 router.use("/amazon-onboarding", amazonOnboardingRoutes);
+router.use("/amazon-leads", amazonLeadsRoutes);
 
 // CREATE
 router.post("/", validateLead, createLead);

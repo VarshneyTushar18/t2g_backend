@@ -25,12 +25,23 @@ const allowedOrigins = [
   process.env.CLIENT_URL_MAIN,
   process.env.CLIENT_URL_STAGE,
   process.env.CLIENT_URL,
+  process.env.CLIENT_URL_S4A,
+  process.env.SERVICES4AMAZON_URL,
   "https://tech2globe.com",
+  "https://www.tech2globe.com",
+  "https://www.services4amazon.com",
+  "https://services4amazon.com",
   "http://localhost:3000",
   "http://localhost:3001",
 ].filter(Boolean);
 
-const hostWithoutWww = (hostname) => hostname.replace(/^www\./i, "");
+const hostWithoutWww = (hostname) =>
+  String(hostname || "")
+    .replace(/^www\./i, "")
+    .toLowerCase();
+
+const isServices4AmazonHost = (hostname) =>
+  hostWithoutWww(hostname) === "services4amazon.com";
 
 /** Allow exact match, or same site with/without www (e.g. tech2globe.com vs www.tech2globe.com). */
 function isOriginAllowed(origin) {
@@ -40,13 +51,18 @@ function isOriginAllowed(origin) {
   if (origin.includes("ngrok-free.dev")) return true;
 
   try {
-    const originHost = hostWithoutWww(new URL(origin).hostname);
+    const originUrl = new URL(origin);
+    const originHost = hostWithoutWww(originUrl.hostname);
+
+    if (isServices4AmazonHost(originUrl.hostname)) return true;
+
     return allowedOrigins.some((allowed) => {
       try {
-        const allowedHost = hostWithoutWww(new URL(allowed).hostname);
+        const allowedUrl = new URL(allowed);
+        const allowedHost = hostWithoutWww(allowedUrl.hostname);
         return (
           allowedHost === originHost &&
-          new URL(allowed).protocol === new URL(origin).protocol
+          allowedUrl.protocol === originUrl.protocol
         );
       } catch {
         return false;

@@ -15,6 +15,12 @@ import {
   exportAmazonOnboardings,
   deleteAmazonOnboarding,
 } from "./amazon-onboarding/amazonOnboarding.controller.js";
+import {
+  getAmazonLeads,
+  getAmazonLeadById,
+  exportAmazonLeads,
+  deleteAmazonLead,
+} from "./amazon-leads/amazonLeads.controller.js";
 
 // ================= COMMON HELPERS =================
 
@@ -389,6 +395,9 @@ export const getLeads = async (req, res) => {
   if (sanitize(req.query.form_type) === "amazon_onboarding") {
     return getAmazonOnboardings(req, res);
   }
+  if (sanitize(req.query.form_type) === "amazon_leads") {
+    return getAmazonLeads(req, res);
+  }
 
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
@@ -442,6 +451,9 @@ export const exportLeads = async (req, res) => {
   }
   if (sanitize(req.query.form_type) === "amazon_onboarding") {
     return exportAmazonOnboardings(req, res);
+  }
+  if (sanitize(req.query.form_type) === "amazon_leads") {
+    return exportAmazonLeads(req, res);
   }
 
   try {
@@ -514,6 +526,9 @@ export const getLeadById = async (req, res) => {
   if (sanitize(req.query.form_type) === "amazon_onboarding") {
     return getAmazonOnboardingById(req, res);
   }
+  if (sanitize(req.query.form_type) === "amazon_leads") {
+    return getAmazonLeadById(req, res);
+  }
 
   try {
     const id = Number(req.params.id);
@@ -539,6 +554,11 @@ export const getLeadById = async (req, res) => {
     );
     if (amazonRows.length) {
       return getAmazonOnboardingById(req, res);
+    }
+
+    const [s4aRows] = await pool.execute(`SELECT * FROM amazon_leads WHERE id = ?`, [id]);
+    if (s4aRows.length) {
+      return getAmazonLeadById(req, res);
     }
 
     const [rows] = await pool.execute(`SELECT * FROM leads WHERE id = ?`, [id]);
@@ -579,6 +599,11 @@ export const deleteLead = async (req, res) => {
     );
     if (amazonRows.length) {
       return deleteAmazonOnboarding(req, res);
+    }
+
+    const [s4aRows] = await pool.execute(`SELECT id FROM amazon_leads WHERE id = ?`, [id]);
+    if (s4aRows.length) {
+      return deleteAmazonLead(req, res);
     }
 
     const [result] = await pool.execute(`DELETE FROM leads WHERE id = ?`, [id]);
