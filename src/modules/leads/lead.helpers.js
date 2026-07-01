@@ -31,7 +31,19 @@ export const verifyTurnstile = async (
   );
 
   if (!verifyResponse.data.success) {
-    return { ok: false, message: "Captcha verification failed" };
+    const codes = verifyResponse.data["error-codes"] || [];
+    if (codes.length) {
+      console.error("Turnstile verify failed:", codes.join(", "));
+    }
+    const message =
+      codes.includes("invalid-input-secret")
+        ? "Captcha secret misconfigured on server"
+        : codes.includes("timeout-or-duplicate")
+          ? "Captcha expired — please verify again"
+          : codes.includes("invalid-input-response")
+            ? "Captcha invalid — please verify again"
+            : "Captcha verification failed";
+    return { ok: false, message, codes };
   }
 
   return { ok: true };

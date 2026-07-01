@@ -19,7 +19,11 @@ const THANK_YOU_URL =
 const turnstileSecret = () =>
   process.env.SERVICES4AMAZON_TURNSTILE_SECRET ||
   process.env.AMAZON_LEADS_TURNSTILE_SECRET ||
-  process.env.TURNSTILE_SECRET_KEY;
+  process.env.S4A_TURNSTILE_SECRET ||
+  process.env.SERVICES4AMAZON_TURNSTILE_KEY ||
+  process.env.TURNSTILE_SECRET_KEY ||
+  process.env.TURNSTILE_SECRET ||
+  null;
 
 const buildFullName = (firstName, lastName) => {
   const parts = [sanitize(firstName), sanitize(lastName)].filter(Boolean);
