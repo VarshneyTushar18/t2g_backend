@@ -14,7 +14,7 @@ const FORM_TYPE = "amazon_leads";
 const BRAND_NAME = "Services4Amazon";
 const THANK_YOU_URL =
   process.env.SERVICES4AMAZON_THANK_YOU_URL ||
-  "https://www.services4amazon.com/thank-you";
+  "https://www.services4amazon.com/thank-you.html";
 
 const turnstileSecret = () =>
   process.env.SERVICES4AMAZON_TURNSTILE_SECRET ||
