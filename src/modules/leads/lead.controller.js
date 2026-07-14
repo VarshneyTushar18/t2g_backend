@@ -196,12 +196,17 @@ export const createLead = async (req, res) => {
 
     // ================= MAIL 1: TO LEAD TEAM =================
 
+    const teamMailSubject =
+      form_type === "amazon_ads"
+        ? "Enquiry From Google Ads"
+        : `New Lead Inquiry - ${name}`;
+
     transporter
       .sendMail({
         from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
         to: LEAD_EMAILS.join(","),
         replyTo: email,
-        subject: `New Lead Inquiry - ${name}`,
+        subject: teamMailSubject,
 
         html: `
         <div style="background:#f4f4f4;padding:40px 20px;font-family:Arial,sans-serif;">
@@ -209,7 +214,7 @@ export const createLead = async (req, res) => {
           <div style="max-width:700px;margin:auto;background:#ffffff;border-radius:10px;padding:35px;">
 
             <h2 style="margin-top:0;color:#111;">
-              New Lead Inquiry
+              ${form_type === "amazon_ads" ? "Enquiry From Google Ads" : "New Lead Inquiry"}
             </h2>
 
             <hr style="border:none;border-top:1px solid #e5e5e5;margin:20px 0;" />
