@@ -67,7 +67,7 @@ const countriesMatch = (formCountry, geoCountryName) => {
 
 // ================= LEAD EMAIL LIST =================
 
-const LEAD_EMAILS = ["info@tech2globe.com", "enquiries@tech2globe.net"];
+const LEAD_EMAILS = ["info@tech2globe.com", "enquiries@tech2globe.com"];
 
 // ================= CREATE LEAD =================
 

@@ -224,7 +224,7 @@ export const createShopifyIntake = async (req, res) => {
         from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
         to: LEAD_EMAILS.join(","),
         replyTo: data.email,
-        subject: `New Shopify Intake - ${data.name}`,
+        subject: `Enquiry - Shopify Intake - ${data.name}`,
         html: buildTeamEmailHtml(record, ip),
       })
       .then((info) => console.log("Shopify intake mail sent:", info.messageId))

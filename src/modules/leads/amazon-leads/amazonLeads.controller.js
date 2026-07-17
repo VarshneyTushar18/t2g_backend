@@ -148,7 +148,7 @@ export const createAmazonLead = async (req, res) => {
         from: `"Tech2Globe" <${process.env.SMTP_EMAIL}>`,
         to: LEAD_EMAILS.join(","),
         replyTo: email,
-        subject: `New ${BRAND_NAME} Lead - ${name}`,
+        subject: `Enquiry from - services4amazon Page - ${name}`,
         html: buildTeamEmailHtml(lead),
       })
       .catch((err) => console.error("Amazon lead team mail failed:", err.message));
