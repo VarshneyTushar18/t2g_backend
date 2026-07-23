@@ -146,11 +146,8 @@ export const createAmazonLead = async (req, res) => {
       return res.status(400).json({ success: false, errors });
     }
 
-    // store_link = Amazon URL; message = optional notes (fallback to store link for older admin views)
-    const message =
-      messageInput && messageInput !== storeLink
-        ? messageInput
-        : messageInput || storeLink || "Free Amazon Audit Request";
+    // Keep message independent from store_link (do not copy URL into message)
+    const message = messageInput || null;
     const name = buildFullName(firstName, lastName) || firstName;
     const geo = await lookupGeo(ip);
     // Prefer form selection; fall back to IP geo only when country wasn't provided
@@ -251,13 +248,13 @@ const buildFilters = (query) => {
 
 const mapListRow = (row) => {
   const storeLink = row.store_link || null;
+  const message = row.message || null;
   return {
     ...row,
     form_type: FORM_TYPE,
     lead_source: FORM_TYPE,
     store_link: storeLink,
-    // Table "Message" column: prefer notes, else store link
-    message: row.message || storeLink || "Services4Amazon audit request",
+    message,
   };
 };
 
