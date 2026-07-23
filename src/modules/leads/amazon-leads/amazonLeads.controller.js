@@ -64,21 +64,44 @@ const lookupGeo = async (ip) => {
   }
 };
 
-const buildTeamEmailHtml = (lead) => `
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const looksLikeUrl = (value) => /^https?:\/\/\S+/i.test(String(value || "").trim());
+
+/** Prefer store_link; only use message as store link when it looks like a URL (keeps old text messages out of store_link). */
+const resolveStoreLink = (body) => {
+  const explicit = sanitize(body.store_link);
+  if (explicit) return explicit;
+  const message = sanitize(body.message);
+  return looksLikeUrl(message) ? message : null;
+};
+
+const buildTeamEmailHtml = (lead) => {
+  const storeLink = lead.store_link ? escapeHtml(lead.store_link) : "";
+  return `
 <div style="background:#f4f4f4;padding:40px 20px;font-family:Arial,sans-serif;">
   <div style="max-width:700px;margin:auto;background:#ffffff;border-radius:10px;padding:35px;">
     <h2 style="margin-top:0;color:#232F3E;">New ${BRAND_NAME} Lead</h2>
     <hr style="border:none;border-top:1px solid #e5e5e5;margin:20px 0;" />
-    <p><strong>Name:</strong> ${lead.name || "-"}</p>
-    <p><strong>Email:</strong> ${lead.email || "-"}</p>
-    <p><strong>Phone:</strong> ${lead.phone || "-"}</p>
-    <p><strong>Country:</strong> ${lead.country || "-"}</p>
-    <p><strong>Message:</strong> ${lead.message || "-"}</p>
-    <p><strong>Source:</strong> ${lead.source_page || "-"}</p>
-    <p><strong>IP:</strong> ${lead.ip || "-"}</p>
-    <p><strong>Location:</strong> ${lead.location || "-"}</p>
+    <p><strong>Name:</strong> ${escapeHtml(lead.name) || "-"}</p>
+    <p><strong>Email:</strong> ${escapeHtml(lead.email) || "-"}</p>
+    <p><strong>Phone:</strong> ${escapeHtml(lead.phone) || "-"}</p>
+    <p><strong>Country:</strong> ${escapeHtml(lead.country) || "-"}</p>
+    <p><strong>Amazon Store Link:</strong> ${
+      storeLink ? `<a href="${storeLink}">${storeLink}</a>` : "-"
+    }</p>
+    <p><strong>Source:</strong> ${escapeHtml(lead.source_page) || "-"}</p>
+    <p><strong>IP:</strong> ${escapeHtml(lead.ip) || "-"}</p>
+    <p><strong>Location:</strong> ${escapeHtml(lead.location) || "-"}</p>
   </div>
 </div>`;
+};
 
 export const createAmazonLead = async (req, res) => {
   try {
@@ -104,29 +127,37 @@ export const createAmazonLead = async (req, res) => {
     const lastName = sanitize(body.lastName);
     const email = sanitize(body.email)?.toLowerCase();
     const phone = sanitize(body.phone);
-    let message = sanitize(body.message);
+    const countrySelected = sanitize(body.country);
+    const storeLink = resolveStoreLink(body);
+    const messageInput = sanitize(body.message);
     const sourcePage = sanitize(body.source_page) || "";
 
     if (!firstName) errors.firstName = "Name is required";
-    if (requireMessage && !lastName) errors.lastName = "Last name is required";
     if (!email || !validateEmail(email)) errors.email = "Valid email is required";
     if (!validatePhone(phone)) errors.phone = "Enter a valid phone number";
-    if (requireMessage && !message) errors.message = "Message is required";
+    if (!countrySelected) errors.country = "Please select a country";
+    if (requireMessage && !storeLink) {
+      // Both keys so new (store_link) and older clients (message) show the error
+      errors.store_link = "Amazon store link is required";
+      errors.message = "Amazon store link is required";
+    }
 
     if (Object.keys(errors).length) {
       return res.status(400).json({ success: false, errors });
     }
 
-    if (!message) message = "Free Amazon Audit Request";
-
+    // Keep message filled for admin/export compatibility; store_link holds the URL when present
+    const message = storeLink || messageInput || "Free Amazon Audit Request";
     const name = buildFullName(firstName, lastName) || firstName;
     const geo = await lookupGeo(ip);
+    // Prefer form selection; fall back to IP geo only when country wasn't provided
+    const countryForRecord = countrySelected || geo.country;
 
     const [result] = await pool.execute(
       `INSERT INTO amazon_leads
-       (name, email, country, phone, message, source_page, client_ip)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [name, email, geo.country, phone, message, sourcePage, ip],
+       (name, email, country, phone, store_link, message, source_page, client_ip)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [name, email, countryForRecord, phone, storeLink || null, message, sourcePage, ip],
     );
 
     const lead = {
@@ -134,8 +165,9 @@ export const createAmazonLead = async (req, res) => {
       name,
       email,
       phone,
+      store_link: storeLink,
       message,
-      country: geo.country,
+      country: countryForRecord,
       location: geo.location,
       ip,
       source_page: sourcePage,
@@ -194,9 +226,9 @@ const buildFilters = (query) => {
     const like = `%${search}%`;
     clauses.push(`(
       name LIKE ? OR email LIKE ? OR phone LIKE ? OR country LIKE ? OR
-      message LIKE ? OR source_page LIKE ?
+      store_link LIKE ? OR message LIKE ? OR source_page LIKE ?
     )`);
-    params.push(like, like, like, like, like, like);
+    params.push(like, like, like, like, like, like, like);
   }
 
   const dateFrom = sanitize(query.date_from);
@@ -214,12 +246,17 @@ const buildFilters = (query) => {
   return { where, params };
 };
 
-const mapListRow = (row) => ({
-  ...row,
-  form_type: FORM_TYPE,
-  lead_source: FORM_TYPE,
-  message: row.message || "Services4Amazon audit request",
-});
+const mapListRow = (row) => {
+  const storeLink = row.store_link || null;
+  return {
+    ...row,
+    form_type: FORM_TYPE,
+    lead_source: FORM_TYPE,
+    store_link: storeLink,
+    // Admin UI still reads `message`; prefer store_link when present
+    message: storeLink || row.message || "Services4Amazon audit request",
+  };
+};
 
 export const getAmazonLeads = async (req, res) => {
   try {
@@ -287,6 +324,7 @@ export const exportAmazonLeads = async (req, res) => {
       "Email",
       "Country",
       "Phone",
+      "Store Link",
       "Message",
       "Source Page",
       "Client IP",
@@ -302,6 +340,7 @@ export const exportAmazonLeads = async (req, res) => {
           r.email,
           r.country,
           r.phone,
+          r.store_link,
           r.message,
           r.source_page,
           r.client_ip,
