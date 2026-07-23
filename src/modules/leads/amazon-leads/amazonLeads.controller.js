@@ -42,9 +42,9 @@ const validatePhone = (phone) => {
 
 const formatCountryFromGeo = (geo) => {
   if (!geo?.country_name) return null;
-  const dialCode = geo.country_calling_code
-    ? ` (+${geo.country_calling_code})`
-    : "";
+  // ipapi.co already returns calling codes with a leading "+", e.g. "+91"
+  const callingCode = String(geo.country_calling_code || "").replace(/^\+/, "");
+  const dialCode = callingCode ? ` (+${callingCode})` : "";
   return `${geo.country_name}${dialCode}`;
 };
 
