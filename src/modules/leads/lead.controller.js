@@ -169,7 +169,8 @@ export const createLead = async (req, res) => {
     }
 
     const countrySelected = country;
-    const countryForRecord = countryFromIp || countrySelected;
+    // Prefer the form selection; fall back to IP geo only when country wasn't provided
+    const countryForRecord = countrySelected || countryFromIp;
     const countryMismatch =
       countrySelected &&
       countryFromIp &&
@@ -238,7 +239,7 @@ export const createLead = async (req, res) => {
 
             ${
               countryMismatch
-                ? `<p><strong>Country (form selection):</strong> ${countrySelected}</p>`
+                ? `<p><strong>Country (IP detected):</strong> ${countryFromIp}</p>`
                 : ""
             }
 
