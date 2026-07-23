@@ -84,6 +84,7 @@ const resolveStoreLink = (body) => {
 
 const buildTeamEmailHtml = (lead) => {
   const storeLink = lead.store_link ? escapeHtml(lead.store_link) : "";
+  const message = lead.message ? escapeHtml(lead.message).replace(/\n/g, "<br/>") : "";
   return `
 <div style="background:#f4f4f4;padding:40px 20px;font-family:Arial,sans-serif;">
   <div style="max-width:700px;margin:auto;background:#ffffff;border-radius:10px;padding:35px;">
@@ -96,6 +97,7 @@ const buildTeamEmailHtml = (lead) => {
     <p><strong>Amazon Store Link:</strong> ${
       storeLink ? `<a href="${storeLink}">${storeLink}</a>` : "-"
     }</p>
+    <p><strong>Message:</strong> ${message || "-"}</p>
     <p><strong>Source:</strong> ${escapeHtml(lead.source_page) || "-"}</p>
     <p><strong>IP:</strong> ${escapeHtml(lead.ip) || "-"}</p>
     <p><strong>Location:</strong> ${escapeHtml(lead.location) || "-"}</p>
@@ -137,17 +139,18 @@ export const createAmazonLead = async (req, res) => {
     if (!validatePhone(phone)) errors.phone = "Enter a valid phone number";
     if (!countrySelected) errors.country = "Please select a country";
     if (requireMessage && !storeLink) {
-      // Both keys so new (store_link) and older clients (message) show the error
       errors.store_link = "Amazon store link is required";
-      errors.message = "Amazon store link is required";
     }
 
     if (Object.keys(errors).length) {
       return res.status(400).json({ success: false, errors });
     }
 
-    // Keep message filled for admin/export compatibility; store_link holds the URL when present
-    const message = storeLink || messageInput || "Free Amazon Audit Request";
+    // store_link = Amazon URL; message = optional notes (fallback to store link for older admin views)
+    const message =
+      messageInput && messageInput !== storeLink
+        ? messageInput
+        : messageInput || storeLink || "Free Amazon Audit Request";
     const name = buildFullName(firstName, lastName) || firstName;
     const geo = await lookupGeo(ip);
     // Prefer form selection; fall back to IP geo only when country wasn't provided
@@ -253,8 +256,8 @@ const mapListRow = (row) => {
     form_type: FORM_TYPE,
     lead_source: FORM_TYPE,
     store_link: storeLink,
-    // Admin UI still reads `message`; prefer store_link when present
-    message: storeLink || row.message || "Services4Amazon audit request",
+    // Table "Message" column: prefer notes, else store link
+    message: row.message || storeLink || "Services4Amazon audit request",
   };
 };
 
