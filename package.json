@@ -19,7 +19,9 @@
     "export:blog-seo": "node scripts/export-blog-seo-excel.mjs",
     "import:docx-blogs": "node scripts/import-docx-blogs.mjs",
     "test:mail": "node src/utils/testingmail.js",
-    "test:elevenlabs": "node scripts/test-elevenlabs-email.mjs"
+    "test:elevenlabs": "node scripts/test-elevenlabs-email.mjs",
+    "migrate:amazon-ads-leads": "node scripts/migrate-amazon-ads-lead-fields.mjs",
+    "verify:amazon-ads-leads": "node scripts/verify-amazon-ads-lead-fields.mjs"
   },
   "keywords": [],
   "author": "",

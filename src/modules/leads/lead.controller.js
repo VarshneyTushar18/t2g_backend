@@ -105,8 +105,20 @@ export const createLead = async (req, res) => {
       });
     }
 
-    let { name, email, country, phone, message, form_type, source_page } =
-      req.body;
+    let {
+      name,
+      email,
+      country,
+      phone,
+      message,
+      form_type,
+      source_page,
+      company,
+      website,
+      marketplaces,
+      spend_band,
+      role,
+    } = req.body;
 
     // ===== VALIDATION =====
 
@@ -124,10 +136,17 @@ export const createLead = async (req, res) => {
       });
     }
 
-    if (!phone && !message) {
+    if (!phone && !message && form_type !== "amazon_ads") {
       return res.status(400).json({
         success: false,
         message: "Either phone or message is required",
+      });
+    }
+
+    if (form_type === "amazon_ads" && !phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone is required",
       });
     }
 
@@ -140,6 +159,14 @@ export const createLead = async (req, res) => {
     message = sanitize(message);
     form_type = sanitize(form_type);
     source_page = sanitize(source_page);
+    company = sanitize(company);
+    website = sanitize(website);
+    spend_band = sanitize(spend_band);
+    role = sanitize(role);
+
+    const marketplacesText = Array.isArray(marketplaces)
+      ? marketplaces.map((item) => sanitize(item)).filter(Boolean).join(", ")
+      : sanitize(marketplaces);
 
     // ===== CLIENT IP =====
 
@@ -181,14 +208,19 @@ export const createLead = async (req, res) => {
     const [result] = await pool.execute(
       `
       INSERT INTO leads 
-      (name, email, country, phone, message, form_type, source_page)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (name, email, country, phone, company, website, marketplaces, spend_band, role, message, form_type, source_page)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         name,
         email,
         countryForRecord,
         phone,
+        company,
+        website,
+        marketplacesText,
+        spend_band,
+        role,
         message,
         form_type,
         source_page,
@@ -197,10 +229,33 @@ export const createLead = async (req, res) => {
 
     // ================= MAIL 1: TO LEAD TEAM =================
 
+    const spendLabel = spend_band ? ` [${spend_band}]` : "";
+    const companyLabel = company ? ` - ${company}` : "";
     const teamMailSubject =
       form_type === "amazon_ads"
-        ? "Enquiry From Google Ads"
+        ? `Enquiry From Google Ads${companyLabel}${spendLabel}`
         : `New Lead Inquiry - ${name}`;
+
+    const amazonQualificationHtml =
+      form_type === "amazon_ads"
+        ? `
+            <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
+
+            <h3 style="margin-bottom:15px;color:#222;">
+              Brand Qualification
+            </h3>
+
+            <p><strong>Company / Brand:</strong> ${company || "-"}</p>
+            <p><strong>Website / Storefront:</strong> ${
+              website
+                ? `<a href="${website}">${website}</a>`
+                : "-"
+            }</p>
+            <p><strong>Marketplaces:</strong> ${marketplacesText || "-"}</p>
+            <p><strong>Monthly ad spend / revenue:</strong> ${spend_band || "-"}</p>
+            <p><strong>Role:</strong> ${role || "-"}</p>
+          `
+        : "";
 
     transporter
       .sendMail({
@@ -247,6 +302,8 @@ export const createLead = async (req, res) => {
 
             <p><strong>Sender IP:</strong> ${ip}</p>
 
+            ${amazonQualificationHtml}
+
             <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
 
             <h3 style="margin-bottom:15px;color:#222;">
@@ -254,7 +311,7 @@ export const createLead = async (req, res) => {
             </h3>
 
             <p style="line-height:1.7;">
-              ${message || "-"}
+              ${(message || "-").replace(/\n/g, "<br/>")}
             </p>
 
             <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
@@ -320,6 +377,18 @@ export const createLead = async (req, res) => {
 
             <p><strong>Country:</strong> ${countrySelected || countryForRecord || "-"}</p>
 
+            ${
+              form_type === "amazon_ads"
+                ? `
+            <p><strong>Company / Brand:</strong> ${company || "-"}</p>
+            <p><strong>Website / Storefront:</strong> ${website || "-"}</p>
+            <p><strong>Marketplaces:</strong> ${marketplacesText || "-"}</p>
+            <p><strong>Monthly ad spend / revenue:</strong> ${spend_band || "-"}</p>
+            <p><strong>Role:</strong> ${role || "-"}</p>
+                `
+                : ""
+            }
+
             <hr style="border:none;border-top:1px solid #e5e5e5;margin:25px 0;" />
 
             <p>
@@ -366,9 +435,9 @@ const buildLeadFilters = (query) => {
   if (search) {
     const like = `%${search}%`;
     clauses.push(
-      `(name LIKE ? OR email LIKE ? OR phone LIKE ? OR message LIKE ? OR country LIKE ? OR source_page LIKE ? OR form_type LIKE ?)`,
+      `(name LIKE ? OR email LIKE ? OR phone LIKE ? OR message LIKE ? OR country LIKE ? OR source_page LIKE ? OR form_type LIKE ? OR company LIKE ? OR website LIKE ? OR marketplaces LIKE ? OR spend_band LIKE ? OR role LIKE ?)`,
     );
-    params.push(like, like, like, like, like, like, like);
+    params.push(like, like, like, like, like, like, like, like, like, like, like, like);
   }
 
   const formType = sanitize(query.form_type);
@@ -413,7 +482,7 @@ export const getLeads = async (req, res) => {
 
     const [rows] = await pool.query(
       `
-      SELECT id, name, email, country, phone, message, form_type, source_page, created_at
+      SELECT id, name, email, country, phone, company, website, marketplaces, spend_band, role, message, form_type, source_page, created_at
       FROM leads
       ${where}
       ORDER BY id DESC
@@ -468,7 +537,7 @@ export const exportLeads = async (req, res) => {
 
     const [rows] = await pool.query(
       `
-      SELECT id, name, email, country, phone, message, form_type, source_page, created_at
+      SELECT id, name, email, country, phone, company, website, marketplaces, spend_band, role, message, form_type, source_page, created_at
       FROM leads
       ${where}
       ORDER BY id DESC
@@ -483,6 +552,11 @@ export const exportLeads = async (req, res) => {
       "Email",
       "Country",
       "Phone",
+      "Company",
+      "Website",
+      "Marketplaces",
+      "Spend Band",
+      "Role",
       "Message",
       "Form Type",
       "Source Page",
@@ -498,6 +572,11 @@ export const exportLeads = async (req, res) => {
           r.email,
           r.country,
           r.phone,
+          r.company,
+          r.website,
+          r.marketplaces,
+          r.spend_band,
+          r.role,
           r.message,
           r.form_type,
           r.source_page,
