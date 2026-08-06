@@ -703,3 +703,757 @@ export const deleteLead = async (req, res) => {
     return res.status(500).json({ success: false });
   }
 };
+
+// ================= DASHBOARD STATS =================
+
+const buildDateOnlyFilters = (query) => {
+  const clauses = [];
+  const params = [];
+  const dateFrom = sanitize(query.date_from);
+  const dateTo = sanitize(query.date_to);
+  if (dateFrom) {
+    clauses.push(`DATE(created_at) >= ?`);
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    clauses.push(`DATE(created_at) <= ?`);
+    params.push(dateTo);
+  }
+  return { clauses, params };
+};
+
+const withWhere = (extraClauses = [], baseClauses = []) => {
+  const all = [...baseClauses, ...extraClauses];
+  return all.length ? `WHERE ${all.join(" AND ")}` : "";
+};
+
+const countFromTable = async (table, dateFilters, extraClauses = [], extraParams = []) => {
+  const where = withWhere(extraClauses, dateFilters.clauses);
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(*) AS total FROM ${table} ${where}`,
+    [...dateFilters.params, ...extraParams],
+  );
+  return Number(total) || 0;
+};
+
+export const getLeadStats = async (req, res) => {
+  try {
+    const dateFilters = buildDateOnlyFilters(req.query);
+    const formTypeFilter = sanitize(req.query.form_type);
+
+    // When a specific landing form is requested, only query that table.
+    if (formTypeFilter === "shopify_intake") {
+      const total = await countFromTable("shopify_intake_leads", dateFilters);
+      const byCompany = await companyBreakdown(
+        "shopify_intake_leads",
+        "business_name",
+        dateFilters,
+      );
+      const uniqueCompanies = await uniqueCompanyCount(
+        "shopify_intake_leads",
+        "business_name",
+        dateFilters,
+      );
+      const uniqueCountries = await uniqueCountryCount("shopify_intake_leads", dateFilters);
+      const byCountry = await countryBreakdown("shopify_intake_leads", dateFilters);
+      const byDay = await dayBreakdown("shopify_intake_leads", dateFilters);
+      const byMonth = await monthBreakdown("shopify_intake_leads", dateFilters);
+      const bySourcePage = await sourcePageBreakdown("shopify_intake_leads", dateFilters);
+      const recentLeads = await fetchRecentFromTable(
+        "shopify_intake_leads",
+        dateFilters,
+        "id, name, email, business_name AS business_name, country, source_page, created_at",
+        "shopify_intake",
+        12,
+      );
+      const period = await periodTotals("shopify_intake_leads", dateFilters);
+      const totals = { ...period, total, uniqueCompanies, uniqueCountries };
+      return res.json(
+        buildStatsResponse({
+          totals,
+          byFormType: [{ key: "shopify_intake", count: total }],
+          byCompany,
+          byCountry,
+          byDay,
+          byMonth,
+          bySourcePage,
+          recentLeads,
+        }),
+      );
+    }
+
+    if (formTypeFilter === "amazon_onboarding") {
+      const total = await countFromTable("amazon_onboarding_leads", dateFilters);
+      const byCompany = await companyBreakdown(
+        "amazon_onboarding_leads",
+        "company_name",
+        dateFilters,
+      );
+      const uniqueCompanies = await uniqueCompanyCount(
+        "amazon_onboarding_leads",
+        "company_name",
+        dateFilters,
+      );
+      const byCountry = [];
+      const byDay = await dayBreakdown("amazon_onboarding_leads", dateFilters);
+      const byMonth = await monthBreakdown("amazon_onboarding_leads", dateFilters);
+      const bySourcePage = await sourcePageBreakdown("amazon_onboarding_leads", dateFilters);
+      const recentLeads = await fetchRecentFromTable(
+        "amazon_onboarding_leads",
+        dateFilters,
+        "id, contact_person AS name, email, company_name, NULL AS country, source_page, created_at",
+        "amazon_onboarding",
+        12,
+      );
+      const period = await periodTotals("amazon_onboarding_leads", dateFilters);
+      const totals = {
+        ...period,
+        total,
+        uniqueCompanies,
+        uniqueCountries: 0,
+      };
+      return res.json(
+        buildStatsResponse({
+          totals,
+          byFormType: [{ key: "amazon_onboarding", count: total }],
+          byCompany,
+          byCountry,
+          byDay,
+          byMonth,
+          bySourcePage,
+          recentLeads,
+        }),
+      );
+    }
+
+    if (formTypeFilter === "amazon_leads") {
+      const total = await countFromTable("amazon_leads", dateFilters);
+      const byCompany = [];
+      const uniqueCountries = await uniqueCountryCount("amazon_leads", dateFilters);
+      const byCountry = await countryBreakdown("amazon_leads", dateFilters);
+      const byDay = await dayBreakdown("amazon_leads", dateFilters);
+      const byMonth = await monthBreakdown("amazon_leads", dateFilters);
+      const bySourcePage = await sourcePageBreakdown("amazon_leads", dateFilters);
+      const recentLeads = await fetchRecentFromTable(
+        "amazon_leads",
+        dateFilters,
+        "id, name, email, NULL AS company, country, source_page, created_at",
+        "amazon_leads",
+        12,
+      );
+      const period = await periodTotals("amazon_leads", dateFilters);
+      const totals = {
+        ...period,
+        total,
+        uniqueCompanies: 0,
+        uniqueCountries,
+      };
+      return res.json(
+        buildStatsResponse({
+          totals,
+          byFormType: [{ key: "amazon_leads", count: total }],
+          byCompany,
+          byCountry,
+          byDay,
+          byMonth,
+          bySourcePage,
+          recentLeads,
+        }),
+      );
+    }
+
+    const leadsDate = { ...dateFilters };
+    if (formTypeFilter) {
+      leadsDate.clauses = [...dateFilters.clauses, `form_type = ?`];
+      leadsDate.params = [...dateFilters.params, formTypeFilter];
+    }
+
+    const includeLandingForms = !formTypeFilter;
+
+    const [
+      leadsTotal,
+      shopifyTotal,
+      amazonOnboardingTotal,
+      amazonLeadsTotal,
+      formRows,
+      companyRows,
+      countryRows,
+      dayRows,
+      monthRows,
+      sourcePageRows,
+      recentRows,
+      leadsPeriod,
+      uniqueCompanies,
+      uniqueCountriesLeads,
+    ] = await Promise.all([
+      countFromTable("leads", leadsDate),
+      includeLandingForms
+        ? countFromTable("shopify_intake_leads", dateFilters)
+        : Promise.resolve(0),
+      includeLandingForms
+        ? countFromTable("amazon_onboarding_leads", dateFilters)
+        : Promise.resolve(0),
+      includeLandingForms
+        ? countFromTable("amazon_leads", dateFilters)
+        : Promise.resolve(0),
+      pool.query(
+        `SELECT COALESCE(NULLIF(TRIM(form_type), ''), 'unknown') AS key_name, COUNT(*) AS count
+         FROM leads ${withWhere([], leadsDate.clauses)}
+         GROUP BY key_name
+         ORDER BY count DESC`,
+        leadsDate.params,
+      ),
+      combinedCompanyBreakdown(dateFilters, formTypeFilter, includeLandingForms),
+      combinedCountryBreakdown(dateFilters, formTypeFilter, includeLandingForms),
+      combinedDayBreakdown(dateFilters, formTypeFilter, includeLandingForms),
+      combinedMonthBreakdown(dateFilters, formTypeFilter, includeLandingForms),
+      combinedSourcePageBreakdown(dateFilters, formTypeFilter, includeLandingForms),
+      combinedRecentLeads(dateFilters, formTypeFilter, includeLandingForms),
+      periodTotals("leads", leadsDate),
+      combinedUniqueCompanyCount(dateFilters, formTypeFilter, includeLandingForms),
+      combinedUniqueCountryCount(dateFilters, formTypeFilter, includeLandingForms),
+    ]);
+
+    const byFormType = formRows[0].map((r) => ({
+      key: r.key_name,
+      count: Number(r.count) || 0,
+    }));
+
+    if (includeLandingForms) {
+      if (shopifyTotal > 0) {
+        byFormType.push({ key: "shopify_intake", count: shopifyTotal });
+      }
+      if (amazonOnboardingTotal > 0) {
+        byFormType.push({ key: "amazon_onboarding", count: amazonOnboardingTotal });
+      }
+      if (amazonLeadsTotal > 0) {
+        byFormType.push({ key: "amazon_leads", count: amazonLeadsTotal });
+      }
+    }
+
+    byFormType.sort((a, b) => b.count - a.count);
+
+    let today = leadsPeriod.today;
+    let thisWeek = leadsPeriod.thisWeek;
+    let thisMonth = leadsPeriod.thisMonth;
+
+    if (includeLandingForms) {
+      const [shopifyPeriod, amazonOnboardingPeriod, amazonLeadsPeriod] =
+        await Promise.all([
+          periodTotals("shopify_intake_leads", dateFilters),
+          periodTotals("amazon_onboarding_leads", dateFilters),
+          periodTotals("amazon_leads", dateFilters),
+        ]);
+      today += shopifyPeriod.today + amazonOnboardingPeriod.today + amazonLeadsPeriod.today;
+      thisWeek +=
+        shopifyPeriod.thisWeek +
+        amazonOnboardingPeriod.thisWeek +
+        amazonLeadsPeriod.thisWeek;
+      thisMonth +=
+        shopifyPeriod.thisMonth +
+        amazonOnboardingPeriod.thisMonth +
+        amazonLeadsPeriod.thisMonth;
+    }
+
+    const total =
+      leadsTotal + shopifyTotal + amazonOnboardingTotal + amazonLeadsTotal;
+
+    const totals = {
+      total,
+      today,
+      thisWeek,
+      thisMonth,
+      uniqueCompanies,
+      uniqueCountries: uniqueCountriesLeads,
+    };
+
+    return res.json(
+      buildStatsResponse({
+        totals,
+        byFormType,
+        byCompany: companyRows,
+        byCountry: countryRows,
+        byDay: dayRows,
+        byMonth: monthRows,
+        bySourcePage: sourcePageRows,
+        recentLeads: recentRows,
+      }),
+    );
+  } catch (error) {
+    console.error("STATS ERROR:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch lead stats",
+    });
+  }
+};
+
+const periodTotals = async (table, dateFilters) => {
+  const where = withWhere([], dateFilters.clauses);
+  const [rows] = await pool.query(
+    `
+    SELECT
+      SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS today,
+      SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY) THEN 1 ELSE 0 END) AS thisWeek,
+      SUM(CASE WHEN YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN 1 ELSE 0 END) AS thisMonth
+    FROM ${table}
+    ${where}
+    `,
+    dateFilters.params,
+  );
+  const row = rows[0] || {};
+  return {
+    today: Number(row.today) || 0,
+    thisWeek: Number(row.thisWeek) || 0,
+    thisMonth: Number(row.thisMonth) || 0,
+  };
+};
+
+const companyBreakdown = async (table, column, dateFilters, limit = 25) => {
+  const where = withWhere(
+    [`${column} IS NOT NULL`, `TRIM(${column}) <> ''`],
+    dateFilters.clauses,
+  );
+  const [rows] = await pool.query(
+    `
+    SELECT TRIM(${column}) AS name, COUNT(*) AS count
+    FROM ${table}
+    ${where}
+    GROUP BY TRIM(${column})
+    ORDER BY count DESC
+    LIMIT ?
+    `,
+    [...dateFilters.params, limit],
+  );
+  return rows.map((r) => ({ name: r.name, count: Number(r.count) || 0 }));
+};
+
+const uniqueCompanyCount = async (table, column, dateFilters) => {
+  const where = withWhere(
+    [`${column} IS NOT NULL`, `TRIM(${column}) <> ''`],
+    dateFilters.clauses,
+  );
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(DISTINCT TRIM(${column})) AS total FROM ${table} ${where}`,
+    dateFilters.params,
+  );
+  return Number(total) || 0;
+};
+
+const countryBreakdown = async (table, dateFilters, limit = 20) => {
+  const where = withWhere(
+    [`country IS NOT NULL`, `TRIM(country) <> ''`],
+    dateFilters.clauses,
+  );
+  const [rows] = await pool.query(
+    `
+    SELECT TRIM(country) AS name, COUNT(*) AS count
+    FROM ${table}
+    ${where}
+    GROUP BY TRIM(country)
+    ORDER BY count DESC
+    LIMIT ?
+    `,
+    [...dateFilters.params, limit],
+  );
+  return rows.map((r) => ({ name: r.name, count: Number(r.count) || 0 }));
+};
+
+const dayBreakdown = async (table, dateFilters) => {
+  const hasRange = dateFilters.clauses.length > 0;
+  const clauses = hasRange
+    ? dateFilters.clauses
+    : [`created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)`];
+  const params = hasRange ? dateFilters.params : [];
+  const where = withWhere([], clauses);
+  const [rows] = await pool.query(
+    `
+    SELECT DATE(created_at) AS day, COUNT(*) AS count
+    FROM ${table}
+    ${where}
+    GROUP BY DATE(created_at)
+    ORDER BY day ASC
+    `,
+    params,
+  );
+  return rows.map((r) => ({
+    date: r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day).slice(0, 10),
+    count: Number(r.count) || 0,
+  }));
+};
+
+const monthBreakdown = async (table, dateFilters, months = 12) => {
+  const hasRange = dateFilters.clauses.length > 0;
+  const clauses = hasRange
+    ? dateFilters.clauses
+    : [`created_at >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)`];
+  const params = hasRange ? dateFilters.params : [months - 1];
+  const where = withWhere([], clauses);
+  const [rows] = await pool.query(
+    `
+    SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*) AS count
+    FROM ${table}
+    ${where}
+    GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+    ORDER BY month ASC
+    `,
+    params,
+  );
+  return rows.map((r) => ({
+    month: String(r.month),
+    count: Number(r.count) || 0,
+  }));
+};
+
+const sourcePageBreakdown = async (table, dateFilters, limit = 15) => {
+  const where = withWhere(
+    [`source_page IS NOT NULL`, `TRIM(source_page) <> ''`],
+    dateFilters.clauses,
+  );
+  const [rows] = await pool.query(
+    `
+    SELECT TRIM(source_page) AS name, COUNT(*) AS count
+    FROM ${table}
+    ${where}
+    GROUP BY TRIM(source_page)
+    ORDER BY count DESC
+    LIMIT ?
+    `,
+    [...dateFilters.params, limit],
+  );
+  return rows.map((r) => ({ name: r.name, count: Number(r.count) || 0 }));
+};
+
+const uniqueCountryCount = async (table, dateFilters) => {
+  const where = withWhere(
+    [`country IS NOT NULL`, `TRIM(country) <> ''`],
+    dateFilters.clauses,
+  );
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(DISTINCT TRIM(country)) AS total FROM ${table} ${where}`,
+    dateFilters.params,
+  );
+  return Number(total) || 0;
+};
+
+const fetchRecentFromTable = async (
+  table,
+  dateFilters,
+  fields,
+  formTypeLabel,
+  limit = 10,
+) => {
+  const where = withWhere([], dateFilters.clauses);
+  const [rows] = await pool.query(
+    `
+    SELECT ${fields}
+    FROM ${table}
+    ${where}
+    ORDER BY created_at DESC
+    LIMIT ?
+    `,
+    [...dateFilters.params, limit],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name || row.contact_person || "—",
+    email: row.email || "—",
+    company: row.company || row.company_name || row.business_name || null,
+    country: row.country || null,
+    form_type: row.form_type || formTypeLabel,
+    source_page: row.source_page || null,
+    created_at: row.created_at,
+  }));
+};
+
+const buildInsights = ({ total, byFormType, byCountry, byCompany, byDay, bySourcePage }) => {
+  const top = (list) => (list?.length ? list[0] : null);
+  const peakDay = [...(byDay || [])].sort((a, b) => b.count - a.count)[0] || null;
+  const days = Math.max((byDay || []).length, 1);
+  return {
+    topForm: top(byFormType),
+    topCountry: top(byCountry),
+    topCompany: top(byCompany),
+    topSourcePage: top(bySourcePage),
+    peakDay,
+    avgDaily: total > 0 ? Math.round((total / days) * 10) / 10 : 0,
+  };
+};
+
+const buildStatsResponse = (payload) => ({
+  success: true,
+  data: {
+    ...payload,
+    insights: buildInsights({
+      total: payload.totals.total,
+      byFormType: payload.byFormType,
+      byCountry: payload.byCountry,
+      byCompany: payload.byCompany,
+      byDay: payload.byDay,
+      bySourcePage: payload.bySourcePage,
+    }),
+  },
+});
+
+const mergeNamedCounts = (lists, keyField = "name", limit = 25) => {
+  const map = new Map();
+  for (const list of lists) {
+    for (const item of list) {
+      const key = item[keyField];
+      if (!key) continue;
+      map.set(key, (map.get(key) || 0) + (item.count || 0));
+    }
+  }
+  return [...map.entries()]
+    .map(([name, count]) => ({ [keyField]: name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+};
+
+const mergeDayCounts = (lists) => {
+  const map = new Map();
+  for (const list of lists) {
+    for (const item of list) {
+      map.set(item.date, (map.get(item.date) || 0) + (item.count || 0));
+    }
+  }
+  return [...map.entries()]
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+};
+
+const combinedCompanyBreakdown = async (
+  dateFilters,
+  formTypeFilter,
+  includeLandingForms,
+) => {
+  const leadsFilters = {
+    clauses: formTypeFilter
+      ? [...dateFilters.clauses, `form_type = ?`]
+      : dateFilters.clauses,
+    params: formTypeFilter
+      ? [...dateFilters.params, formTypeFilter]
+      : dateFilters.params,
+  };
+  const parts = [companyBreakdown("leads", "company", leadsFilters)];
+  if (includeLandingForms) {
+    parts.push(companyBreakdown("shopify_intake_leads", "business_name", dateFilters));
+    parts.push(
+      companyBreakdown("amazon_onboarding_leads", "company_name", dateFilters),
+    );
+  }
+  const lists = await Promise.all(parts);
+  return mergeNamedCounts(lists, "name", 25);
+};
+
+const combinedUniqueCompanyCount = async (
+  dateFilters,
+  formTypeFilter,
+  includeLandingForms,
+) => {
+  const leadsFilters = {
+    clauses: formTypeFilter
+      ? [...dateFilters.clauses, `form_type = ?`]
+      : dateFilters.clauses,
+    params: formTypeFilter
+      ? [...dateFilters.params, formTypeFilter]
+      : dateFilters.params,
+  };
+  const parts = [uniqueCompanyCount("leads", "company", leadsFilters)];
+  if (includeLandingForms) {
+    parts.push(uniqueCompanyCount("shopify_intake_leads", "business_name", dateFilters));
+    parts.push(
+      uniqueCompanyCount("amazon_onboarding_leads", "company_name", dateFilters),
+    );
+  }
+  const counts = await Promise.all(parts);
+  return counts.reduce((sum, n) => sum + n, 0);
+};
+
+const combinedCountryBreakdown = async (
+  dateFilters,
+  formTypeFilter,
+  includeLandingForms,
+) => {
+  const parts = [
+    countryBreakdown("leads", {
+      clauses: formTypeFilter
+        ? [...dateFilters.clauses, `form_type = ?`]
+        : dateFilters.clauses,
+      params: formTypeFilter
+        ? [...dateFilters.params, formTypeFilter]
+        : dateFilters.params,
+    }),
+  ];
+  if (includeLandingForms) {
+    parts.push(countryBreakdown("shopify_intake_leads", dateFilters));
+    parts.push(countryBreakdown("amazon_leads", dateFilters));
+  }
+  const lists = await Promise.all(parts);
+  return mergeNamedCounts(lists, "name", 20);
+};
+
+const combinedDayBreakdown = async (
+  dateFilters,
+  formTypeFilter,
+  includeLandingForms,
+) => {
+  const leadsFilters = {
+    clauses: formTypeFilter
+      ? [...dateFilters.clauses, `form_type = ?`]
+      : dateFilters.clauses,
+    params: formTypeFilter
+      ? [...dateFilters.params, formTypeFilter]
+      : dateFilters.params,
+  };
+  const parts = [dayBreakdown("leads", leadsFilters)];
+  if (includeLandingForms) {
+    parts.push(dayBreakdown("shopify_intake_leads", dateFilters));
+    parts.push(dayBreakdown("amazon_onboarding_leads", dateFilters));
+    parts.push(dayBreakdown("amazon_leads", dateFilters));
+  }
+  const lists = await Promise.all(parts);
+  return mergeDayCounts(lists);
+};
+
+const mergeMonthCounts = (lists) => {
+  const map = new Map();
+  for (const list of lists) {
+    for (const item of list) {
+      map.set(item.month, (map.get(item.month) || 0) + (item.count || 0));
+    }
+  }
+  return [...map.entries()]
+    .map(([month, count]) => ({ month, count }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+};
+
+const combinedMonthBreakdown = async (
+  dateFilters,
+  formTypeFilter,
+  includeLandingForms,
+) => {
+  const leadsFilters = {
+    clauses: formTypeFilter
+      ? [...dateFilters.clauses, `form_type = ?`]
+      : dateFilters.clauses,
+    params: formTypeFilter
+      ? [...dateFilters.params, formTypeFilter]
+      : dateFilters.params,
+  };
+  const parts = [monthBreakdown("leads", leadsFilters)];
+  if (includeLandingForms) {
+    parts.push(monthBreakdown("shopify_intake_leads", dateFilters));
+    parts.push(monthBreakdown("amazon_onboarding_leads", dateFilters));
+    parts.push(monthBreakdown("amazon_leads", dateFilters));
+  }
+  const lists = await Promise.all(parts);
+  return mergeMonthCounts(lists);
+};
+
+const combinedSourcePageBreakdown = async (
+  dateFilters,
+  formTypeFilter,
+  includeLandingForms,
+) => {
+  const leadsFilters = {
+    clauses: formTypeFilter
+      ? [...dateFilters.clauses, `form_type = ?`]
+      : dateFilters.clauses,
+    params: formTypeFilter
+      ? [...dateFilters.params, formTypeFilter]
+      : dateFilters.params,
+  };
+  const parts = [sourcePageBreakdown("leads", leadsFilters)];
+  if (includeLandingForms) {
+    parts.push(sourcePageBreakdown("shopify_intake_leads", dateFilters));
+    parts.push(sourcePageBreakdown("amazon_onboarding_leads", dateFilters));
+    parts.push(sourcePageBreakdown("amazon_leads", dateFilters));
+  }
+  const lists = await Promise.all(parts);
+  return mergeNamedCounts(lists, "name", 15);
+};
+
+const combinedUniqueCountryCount = async (
+  dateFilters,
+  formTypeFilter,
+  includeLandingForms,
+) => {
+  const leadsFilters = {
+    clauses: formTypeFilter
+      ? [...dateFilters.clauses, `form_type = ?`]
+      : dateFilters.clauses,
+    params: formTypeFilter
+      ? [...dateFilters.params, formTypeFilter]
+      : dateFilters.params,
+  };
+  const parts = [uniqueCountryCount("leads", leadsFilters)];
+  if (includeLandingForms) {
+    parts.push(uniqueCountryCount("shopify_intake_leads", dateFilters));
+    parts.push(uniqueCountryCount("amazon_leads", dateFilters));
+  }
+  const counts = await Promise.all(parts);
+  return counts.reduce((sum, n) => sum + n, 0);
+};
+
+const combinedRecentLeads = async (
+  dateFilters,
+  formTypeFilter,
+  includeLandingForms,
+) => {
+  const leadsFilters = {
+    clauses: formTypeFilter
+      ? [...dateFilters.clauses, `form_type = ?`]
+      : dateFilters.clauses,
+    params: formTypeFilter
+      ? [...dateFilters.params, formTypeFilter]
+      : dateFilters.params,
+  };
+  const parts = [
+    fetchRecentFromTable(
+      "leads",
+      leadsFilters,
+      "id, name, email, company, country, form_type, source_page, created_at",
+      null,
+      12,
+    ),
+  ];
+  if (includeLandingForms) {
+    parts.push(
+      fetchRecentFromTable(
+        "shopify_intake_leads",
+        dateFilters,
+        "id, name, email, business_name AS business_name, country, source_page, created_at",
+        "shopify_intake",
+        12,
+      ),
+    );
+    parts.push(
+      fetchRecentFromTable(
+        "amazon_onboarding_leads",
+        dateFilters,
+        "id, contact_person AS name, email, company_name, NULL AS country, source_page, created_at",
+        "amazon_onboarding",
+        12,
+      ),
+    );
+    parts.push(
+      fetchRecentFromTable(
+        "amazon_leads",
+        dateFilters,
+        "id, name, email, NULL AS company, country, source_page, created_at",
+        "amazon_leads",
+        12,
+      ),
+    );
+  }
+  const lists = await Promise.all(parts);
+  return lists
+    .flat()
+    .sort(
+      (a, b) =>
+        new Date(String(b.created_at || 0)).getTime() -
+        new Date(String(a.created_at || 0)).getTime(),
+    )
+    .slice(0, 15);
+};

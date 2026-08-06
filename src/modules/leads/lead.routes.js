@@ -5,6 +5,7 @@ import {
     getLeadById,
     deleteLead,
     exportLeads,
+    getLeadStats,
 } from "../leads/lead.controller.js";
 import shopifyIntakeRoutes from "./shopify-intake/shopifyIntake.routes.js";
 import amazonOnboardingRoutes from "./amazon-onboarding/amazonOnboarding.routes.js";
@@ -28,6 +29,9 @@ router.get("/", ...adminLeads, getLeads);
 
 // EXPORT CSV (must be before /:id)
 router.get("/export", ...adminLeads, exportLeads);
+
+// DASHBOARD STATS (must be before /:id)
+router.get("/stats", ...adminLeads, getLeadStats);
 
 // READ SINGLE
 router.get("/:id", ...adminLeads, getLeadById);
