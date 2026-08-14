@@ -12,10 +12,10 @@ import amazonOnboardingRoutes from "./amazon-onboarding/amazonOnboarding.routes.
 import amazonLeadsRoutes from "./amazon-leads/amazonLeads.routes.js";
 
 import { validateLead } from "../../middleware/validation.js";
-import { guardModule } from "../auth/auth.middleware.js";
+import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 
 const router = express.Router();
-const adminLeads = guardModule("leads");
+const adminLeads = guardModuleOrApiKey("leads");
 
 router.use("/shopify-intake", shopifyIntakeRoutes);
 router.use("/amazon-onboarding", amazonOnboardingRoutes);

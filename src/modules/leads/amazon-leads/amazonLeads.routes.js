@@ -6,10 +6,10 @@ import {
   exportAmazonLeads,
   deleteAmazonLead,
 } from "./amazonLeads.controller.js";
-import { guardModule } from "../../auth/auth.middleware.js";
+import { guardModuleOrApiKey } from "../../auth/auth.middleware.js";
 
 const router = express.Router();
-const adminLeads = guardModule("leads");
+const adminLeads = guardModuleOrApiKey("leads");
 
 router.post("/", createAmazonLead);
 router.get("/", ...adminLeads, getAmazonLeads);

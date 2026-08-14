@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { ROLE_MODULES, SUPER_ADMIN_ROLE } from "./auth.constants.js";
 import { canPerform, httpMethodToAction } from "./modulePermissions.js";
+import * as ApiKeyModel from "../connect/apiKey.model.js";
 
 const isCrossSiteAdmin =
   process.env.NODE_ENV === "production" ||
@@ -18,6 +19,14 @@ export { cookieOptions };
 const isSuperAdminUser = (user) =>
   user?.role === SUPER_ADMIN_ROLE || user?.role === "admin";
 
+export const extractApiKey = (req) => {
+  const headerKey = req.headers["x-api-key"];
+  if (typeof headerKey === "string" && headerKey.trim()) {
+    return headerKey.trim();
+  }
+  return null;
+};
+
 export const verifyAdmin = (req, res, next) => {
   const token = req.cookies?.token;
 
@@ -32,6 +41,50 @@ export const verifyAdmin = (req, res, next) => {
   } catch {
     return res.status(401).json({ message: "Invalid token" });
   }
+};
+
+/** Cookie JWT or x-api-key / Bearer — for module APIs used by external tools */
+export const verifyAdminOrApiKey = async (req, res, next) => {
+  const rawKey = extractApiKey(req);
+  if (rawKey) {
+    try {
+      const record = await ApiKeyModel.findActiveKeyByRaw(rawKey);
+      if (!record) {
+        return res.status(401).json({ message: "Invalid API key" });
+      }
+      await ApiKeyModel.touchLastUsed(record.id);
+      let moduleList = record.modules;
+      if (typeof moduleList === "string") {
+        try {
+          moduleList = JSON.parse(moduleList);
+        } catch {
+          moduleList = [];
+        }
+      }
+      const { modules, permissions } = ApiKeyModel.buildKeyPermissions(
+        Array.isArray(moduleList) ? moduleList : [],
+        record.read_only === 1 || record.read_only === true,
+      );
+      req.user = {
+        sub: `apikey:${record.id}`,
+        role: "api_key",
+        modules,
+        permissions,
+        apiKeyId: record.id,
+        apiKeyName: record.name,
+      };
+      return next();
+    } catch (err) {
+      if (err.code === "ER_NO_SUCH_TABLE") {
+        return res.status(503).json({
+          message: "API keys not configured. Run sql/api_keys.sql migration.",
+        });
+      }
+      console.error("verifyAdminOrApiKey:", err);
+      return res.status(500).json({ message: "API key verification failed" });
+    }
+  }
+  return verifyAdmin(req, res, next);
 };
 
 export const requireSuperAdmin = (req, res, next) => {
@@ -79,6 +132,13 @@ export const enforceModulePermission =
 
 export const guardModule = (moduleKey) => [
   verifyAdmin,
+  requireModule(moduleKey),
+  enforceModulePermission(moduleKey),
+];
+
+/** Same as guardModule but also accepts x-api-key (external tools only — not admin UI) */
+export const guardModuleOrApiKey = (moduleKey) => [
+  verifyAdminOrApiKey,
   requireModule(moduleKey),
   enforceModulePermission(moduleKey),
 ];

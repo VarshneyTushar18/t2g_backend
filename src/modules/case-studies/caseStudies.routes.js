@@ -1,10 +1,10 @@
 import express from "express";
 import * as controller from "./caseStudies.controller.js";
-import { guardModule } from "../auth/auth.middleware.js";
+import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 import { caseStudiesUpload } from "../../config/multer.js";
 
 const router = express.Router();
-const adminCaseStudies = guardModule("case_studies");
+const adminCaseStudies = guardModuleOrApiKey("case_studies");
 
 // ================= PUBLIC =================
 router.get("/", controller.getAll);

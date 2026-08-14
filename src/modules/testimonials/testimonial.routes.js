@@ -1,10 +1,10 @@
 import express from "express";
 import * as testimonialController from "./testimonial.controller.js";
 import { testimonialUpload } from "../../config/multer.js";
-import { guardModule } from "../auth/auth.middleware.js";
+import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 
 const router = express.Router();
-const adminTestimonials = guardModule("testimonials");
+const adminTestimonials = guardModuleOrApiKey("testimonials");
 
 router.get("/", testimonialController.getTestimonials);
 router.get("/:id", testimonialController.getTestimonial);

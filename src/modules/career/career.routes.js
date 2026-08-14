@@ -1,9 +1,9 @@
 import express from "express";
 import * as CareerController from "./career.controller.js";
-import { guardModule } from "../auth/auth.middleware.js";
+import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 import { resumeUpload } from "../../config/multer.js";
 
-const adminCareer = guardModule("career");
+const adminCareer = guardModuleOrApiKey("career");
 const router = express.Router();
 
 // PUBLIC

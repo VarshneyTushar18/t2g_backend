@@ -4,11 +4,11 @@ import {
   getSubcategories, createSubcategory, updateSubcategory, deleteSubcategory,
   getProjects, createProject, updateProject, deleteProject,
 } from "../portfolio/portfolio.controller.js";
-import { guardModule } from "../auth/auth.middleware.js";
+import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 import { imageUpload } from "../../config/multer.js";
 import { getPortfolioTree } from "../portfolio/portfolio.controller.js";
 
-const adminPortfolio = guardModule("portfolio");
+const adminPortfolio = guardModuleOrApiKey("portfolio");
 const router = express.Router();
 
 // Public

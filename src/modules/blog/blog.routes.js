@@ -1,12 +1,12 @@
 import express from "express";
 import * as controller from "./blog.controller.js";
-import { guardModule } from "../auth/auth.middleware.js";
+import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 import { requireBlogDb } from "../../middleware/requireBlogDb.js";
 import { blogUpload } from "../../config/multer.js";
 import { handleBlogUpload } from "./blog.upload.js";
 
 const router = express.Router();
-const adminBlog = guardModule("blog");
+const adminBlog = guardModuleOrApiKey("blog");
 
 router.use(requireBlogDb);
 
