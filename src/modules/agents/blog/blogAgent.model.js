@@ -136,10 +136,13 @@ export async function getGuidelines(id = 1) {
 
 export async function updateGuidelines(content, updatedBy, id = 1) {
   await blogDb.query(
-    `UPDATE blog_agent_guidelines
-     SET content = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [content, updatedBy ? String(updatedBy) : null, id],
+    `INSERT INTO blog_agent_guidelines (id, content, updated_by)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       content = VALUES(content),
+       updated_by = VALUES(updated_by),
+       updated_at = CURRENT_TIMESTAMP`,
+    [id, content, updatedBy ? String(updatedBy) : null],
   );
   return getGuidelines(id);
 }
