@@ -72,7 +72,11 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
         .default(null)
         .describe("Cover image URL from pick_blog_image (https only)"),
       inline_image_urls: z
-        .array(z.string().url())
+        .array(
+          z
+            .string()
+            .regex(/^https?:\/\/.+/i, "inline_image_urls must be https URLs"),
+        )
         .nullable()
         .default(null)
         .describe(
