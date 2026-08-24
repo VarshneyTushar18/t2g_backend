@@ -43,9 +43,16 @@ function buildSystemContext({ guidelines, feedback, canPublish, userEmail }) {
 Default behavior when user asks to write/publish a blog:
 1. Infer topic from message and conversation history.
 2. If they name an author (e.g. "author Tarun"), pass author_name exactly.
-3. Generate title, Markdown content, excerpt, metaDescription, slug, tags.
-4. Call create_blog_post — publish or draft per permissions and user intent.
-5. Reply with result (id, slug, url) — report tool results only, never invent success.
+3. Decide image type:
+   - If user explicitly asks for AI-generated images (or says "generate images", "AI images", "generated cover"), call generate_blog_image.
+   - Otherwise call pick_blog_image (royalty-free Unsplash).
+4. Generate title, Markdown content, excerpt, slug, tags.
+5. If you used generate_blog_image, pass its URL as featured_image and also optionally generate 1–2 inline images and pass them as inline_image_urls.
+6. Call create_blog_post with featured_image and inline_image_urls (or add_inline_images true for non-AI images).
+7. Always include a cover image unless the user says no images.
+8. If they paste an image URL, use it as featured_image.
+9. If they ask to add images to an existing post, call add_images_to_post.
+10. Reply with result (id, slug, url, featured_image) — never invent success.
 
 Delete: list_blog_posts if needed, then delete_blog_post only on explicit request.
 Public URL format: https://www.tech2globe.com/blogs/{slug}`);

@@ -1,6 +1,7 @@
-import * as model from "./blogAgent.model.js";
-import * as service from "./blogAgent.service.js";
+import * as model from "../blog/blogAgent.model.js";
+import * as service from "./blogImage.service.js";
 import { isAgentConfigured } from "../lib/openai.js";
+import { isCloudinaryConfigured, IMAGE_MODEL } from "./blogImage.generate.js";
 
 function userId(req) {
   return req.user?.sub || req.user?.id;
@@ -8,23 +9,22 @@ function userId(req) {
 
 function handleError(res, err, fallback) {
   console.error(fallback, err);
-  const status = err.status || 500;
-  res.status(status).json({
-    error: err.message || fallback,
-  });
+  res.status(err.status || 500).json({ error: err.message || fallback });
 }
 
-export async function getStatus(req, res) {
+export async function getStatus(_req, res) {
   res.json({
     configured: isAgentConfigured(),
-    agent: "blog",
-    name: "Blog Agent",
+    cloudinary: isCloudinaryConfigured(),
+    agent: "blog-image",
+    name: "Blog Image Agent",
+    model: IMAGE_MODEL,
   });
 }
 
 export async function listThreads(req, res) {
   try {
-    const threads = await model.listThreads(userId(req), { agentType: "writer" });
+    const threads = await model.listThreads(userId(req), { agentType: "image" });
     res.json({ threads });
   } catch (err) {
     handleError(res, err, "Failed to list threads");
@@ -33,12 +33,11 @@ export async function listThreads(req, res) {
 
 export async function createThread(req, res) {
   try {
-    const title = req.body?.title?.trim() || null;
     const thread = await model.createThread({
       userId: userId(req),
       userEmail: req.user?.email || req.user?.apiKeyName || null,
-      title,
-      agentType: "writer",
+      title: req.body?.title?.trim() || null,
+      agentType: "image",
     });
     res.status(201).json({ thread });
   } catch (err) {
@@ -79,15 +78,14 @@ export async function getMessages(req, res) {
 
 export async function sendMessage(req, res) {
   try {
-    const message = req.body?.message;
     const result = await service.sendMessage({
       user: req.user,
       threadId: req.params.threadId,
-      message,
+      message: req.body?.message,
     });
     res.json(result);
   } catch (err) {
-    handleError(res, err, "Agent run failed");
+    handleError(res, err, "Image agent run failed");
   }
 }
 
@@ -95,15 +93,12 @@ export async function addFeedback(req, res) {
   try {
     const thread = await model.getThread(req.params.threadId, userId(req));
     if (!thread) return res.status(404).json({ error: "Thread not found" });
-
     const rating = req.body?.rating;
     const comment = req.body?.comment?.trim() || null;
     const messageId = req.body?.messageId || null;
-
     if (rating !== 1 && rating !== -1 && !comment) {
       return res.status(400).json({ error: "Provide rating (1 or -1) or comment" });
     }
-
     const feedback = await model.addFeedback({
       threadId: req.params.threadId,
       messageId,
@@ -119,7 +114,7 @@ export async function addFeedback(req, res) {
 
 export async function getGuidelines(req, res) {
   try {
-    const guidelines = await model.getGuidelines();
+    const guidelines = await model.getGuidelines(2);
     res.json({ guidelines });
   } catch (err) {
     handleError(res, err, "Failed to get guidelines");
@@ -129,12 +124,19 @@ export async function getGuidelines(req, res) {
 export async function updateGuidelines(req, res) {
   try {
     const content = String(req.body?.content || "").trim();
-    if (!content) {
-      return res.status(400).json({ error: "content is required" });
-    }
-    const guidelines = await model.updateGuidelines(content, userId(req));
+    if (!content) return res.status(400).json({ error: "content is required" });
+    const guidelines = await model.updateGuidelines(content, userId(req), 2);
     res.json({ guidelines });
   } catch (err) {
     handleError(res, err, "Failed to update guidelines");
+  }
+}
+
+export async function listGallery(req, res) {
+  try {
+    const images = await model.listGeneratedImages(userId(req));
+    res.json({ images });
+  } catch (err) {
+    handleError(res, err, "Failed to list images");
   }
 }

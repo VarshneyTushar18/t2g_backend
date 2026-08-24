@@ -1,24 +1,29 @@
 import { randomUUID } from "crypto";
 import blogDb from "../../../config/blogDb.js";
 
-export async function listThreads(userId, { limit = 30 } = {}) {
+export async function listThreads(userId, { limit = 30, agentType = "writer" } = {}) {
   const [rows] = await blogDb.query(
-    `SELECT id, title, created_at, updated_at
+    `SELECT id, title, agent_type, created_at, updated_at
      FROM blog_agent_threads
-     WHERE user_id = ?
+     WHERE user_id = ? AND agent_type = ?
      ORDER BY updated_at DESC
      LIMIT ?`,
-    [String(userId), Number(limit)],
+    [String(userId), agentType, Number(limit)],
   );
   return rows;
 }
 
-export async function createThread({ userId, userEmail, title = null }) {
+export async function createThread({
+  userId,
+  userEmail,
+  title = null,
+  agentType = "writer",
+}) {
   const id = randomUUID();
   await blogDb.query(
-    `INSERT INTO blog_agent_threads (id, user_id, user_email, title)
-     VALUES (?, ?, ?, ?)`,
-    [id, String(userId), userEmail || null, title],
+    `INSERT INTO blog_agent_threads (id, user_id, user_email, title, agent_type)
+     VALUES (?, ?, ?, ?, ?)`,
+    [id, String(userId), userEmail || null, title, agentType],
   );
   return getThread(id, userId);
 }
@@ -121,21 +126,71 @@ export async function listRecentFeedback({ limit = 15 } = {}) {
   return rows;
 }
 
-export async function getGuidelines() {
+export async function getGuidelines(id = 1) {
   const [rows] = await blogDb.query(
-    "SELECT id, content, updated_by, updated_at FROM blog_agent_guidelines WHERE id = 1",
+    "SELECT id, content, updated_by, updated_at FROM blog_agent_guidelines WHERE id = ?",
+    [id],
   );
-  return rows[0] || { id: 1, content: "" };
+  return rows[0] || { id, content: "" };
 }
 
-export async function updateGuidelines(content, updatedBy) {
+export async function updateGuidelines(content, updatedBy, id = 1) {
   await blogDb.query(
     `UPDATE blog_agent_guidelines
      SET content = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = 1`,
-    [content, updatedBy ? String(updatedBy) : null],
+     WHERE id = ?`,
+    [content, updatedBy ? String(updatedBy) : null, id],
   );
-  return getGuidelines();
+  return getGuidelines(id);
+}
+
+export async function saveGeneratedImage({
+  userId,
+  threadId,
+  prompt,
+  cloudinaryUrl,
+  publicId,
+  width,
+  height,
+  postId = null,
+}) {
+  const id = randomUUID();
+  await blogDb.query(
+    `INSERT INTO blog_agent_images
+      (id, user_id, thread_id, prompt, cloudinary_url, public_id, width, height, post_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      String(userId),
+      threadId || null,
+      prompt || null,
+      cloudinaryUrl,
+      publicId || null,
+      width || null,
+      height || null,
+      postId || null,
+    ],
+  );
+  return {
+    id,
+    url: cloudinaryUrl,
+    public_id: publicId,
+    width,
+    height,
+    prompt,
+  };
+}
+
+export async function listGeneratedImages(userId, { limit = 24 } = {}) {
+  const [rows] = await blogDb.query(
+    `SELECT id, prompt, cloudinary_url AS url, public_id, width, height, post_id, created_at
+     FROM blog_agent_images
+     WHERE user_id = ?
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [String(userId), Number(limit)],
+  );
+  return rows;
 }
 
 export async function deleteThread(threadId, userId) {
