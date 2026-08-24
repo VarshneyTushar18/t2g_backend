@@ -83,6 +83,18 @@ export async function ensureBlogAgentTables() {
       );
     }
 
+    const [guide3] = await blogDb.query(
+      "SELECT id FROM blog_agent_guidelines WHERE id = 3",
+    );
+    if (!guide3.length) {
+      await blogDb.query(
+        `INSERT INTO blog_agent_guidelines (id, content) VALUES (3, ?)`,
+        [
+          "Tech2Globe Career Agent:\n- Create clear, professional job posts for Tech2Globe hiring\n- Default location: Noida unless user specifies otherwise\n- Default salary phrasing: Best in the Industry (unless user gives a range)\n- Skills and responsibilities must be concrete and role-specific\n- Prefer closing (inactive) over hard delete when applications may exist\n- Confirm title, experience, positions, and location before create when details are vague\n- After create/update, always report job id, title, and status",
+        ],
+      );
+    }
+
     console.log("Blog agent tables ensured.");
   } catch (err) {
     console.error("Blog agent table setup failed:", err.message);
