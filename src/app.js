@@ -12,6 +12,7 @@ import testimonialRoutes from "./modules/testimonials/testimonial.routes.js";
 import caseStudiesRoutes from "./modules/case-studies/caseStudies.routes.js";
 import blogRoutes from "./modules/blog/blog.routes.js";
 import connectRoutes from "./modules/connect/connect.routes.js";
+import agentsRoutes from "./modules/agents/agents.routes.js";
 import elevenLabsRoutes from "./modules/elevenlabs/elevenlabs.routes.js";
 import elevenLabsFallbackRoutes from "./modules/elevenlabs/fallback/elevenlabs.fallback.routes.js";
 import { handleTranscriptWebhook } from "./modules/elevenlabs/elevenlabs.controller.js";
@@ -158,6 +159,7 @@ app.use("/api/life", lifeRoutes);
 app.use("/api/testimonials", testimonialRoutes);
 app.use("/api/case-studies", caseStudiesRoutes);
 app.use("/api/blog", blogRoutes);
+app.use("/api/agents", agentsRoutes);
 app.use("/api/connect", connectRoutes);
 
 /**
