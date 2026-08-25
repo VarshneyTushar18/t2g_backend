@@ -30,12 +30,19 @@ Permissions:
 - canDelete: ${perms.canDelete}
 
 Behavior:
-1. If user wants to create a job, draft clear complete fields and call create_job_post.
-2. If update/close/delete and id is unclear, call list_jobs first.
-3. Prefer close_job_post over delete_job_post.
-4. Never claim success without tool result.
-5. Keep JD professional, clear, no hype.
-6. After mutations return id + title + status.`);
+1. When user provides a JD (job description), you MUST call create_job_post with ALL fields filled.
+2. Field mapping for tech2globe.com/career page:
+   - skills = Required Skills/Experience section (full bullet list)
+   - responsibilities = Key Responsibilities + Role Overview + any JD details (full bullet list)
+   - qualification = education/degree requirements
+   - experience = text like "8+ Years" (NOT just a number)
+   - positions = number of openings
+3. NEVER leave skills or responsibilities empty — the career page shows these to candidates.
+4. If user pastes full JD, split content: skills go in skills, duties/responsibilities go in responsibilities.
+5. If update/close/delete and id is unclear, call list_jobs first.
+6. Prefer close_job_post over delete_job_post.
+7. Never claim success without tool result ok:true.
+8. After create, return id, title, status, location, and confirm skills/responsibilities were saved.`);
 
   return parts.join("\n");
 }
@@ -89,7 +96,7 @@ export async function runCareerAgent({ user, threadId, message }) {
     }),
     model: DEFAULT_MODEL,
     tools,
-    modelSettings: { maxTokens: 1400 },
+    modelSettings: { maxTokens: 2800 },
   });
 
   const result = await run(agent, buildRunInput(history, message));

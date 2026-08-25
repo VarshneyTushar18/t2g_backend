@@ -48,16 +48,26 @@ export function createCareerAgentTools({ canAdd, canEdit, canDelete }) {
   const createJobPost = tool({
     name: "create_job_post",
     description:
-      "Create a new career job post. Call when user asks to create/post/open a job.",
+      "Create a new career job post on tech2globe.com/career. MUST include full JD in skills and responsibilities.",
     parameters: z.object({
       title: z.string().describe("Job title"),
-      experience: z.number().int().min(0).max(30).default(2),
+      experience: z
+        .string()
+        .describe('Work experience text shown on site, e.g. "8+ Years", "2-5 Years"'),
       positions: z.number().int().min(1).max(200).default(1),
       location: z.string().default("Noida"),
       qualification: z.string().default("Any bachelors degree"),
       salary: z.string().default("Best in the Industry"),
-      skills: z.string().default(""),
-      responsibilities: z.string().default(""),
+      skills: z
+        .string()
+        .describe(
+          "Required skills/experience — full text, bullet points allowed. Maps to Required Skills on career page.",
+        ),
+      responsibilities: z
+        .string()
+        .describe(
+          "Job responsibilities and full JD details — bullet points allowed. Maps to Job Responsibilities on career page.",
+        ),
       status: z.enum(["active", "inactive"]).default("active"),
     }),
     execute: async (params) => {
@@ -65,6 +75,15 @@ export function createCareerAgentTools({ canAdd, canEdit, canDelete }) {
         return {
           ok: false,
           error: "User does not have add permission for career.",
+        };
+      }
+      if (!String(params.skills || "").trim()) {
+        return { ok: false, error: "skills field is required — add required skills/JD" };
+      }
+      if (!String(params.responsibilities || "").trim()) {
+        return {
+          ok: false,
+          error: "responsibilities field is required — add job responsibilities/JD",
         };
       }
       try {
@@ -75,6 +94,9 @@ export function createCareerAgentTools({ canAdd, canEdit, canDelete }) {
           title: job.title,
           status: job.status,
           location: job.location,
+          experience: job.experience,
+          skills_length: String(job.skills || "").length,
+          responsibilities_length: String(job.responsibilities || "").length,
           message: "Job created successfully",
         };
       } catch (err) {
@@ -86,17 +108,17 @@ export function createCareerAgentTools({ canAdd, canEdit, canDelete }) {
   const updateJobPost = tool({
     name: "update_job_post",
     description:
-      "Update an existing job by id. Use list_jobs first if user did not give id.",
+      "Update an existing job by id. Include full skills and responsibilities when updating JD.",
     parameters: z.object({
       id: z.number().int().describe("Job id"),
       title: z.string(),
-      experience: z.number().int().min(0).max(30).default(2),
+      experience: z.string().default("2+ Years"),
       positions: z.number().int().min(1).max(200).default(1),
       location: z.string().default("Noida"),
       qualification: z.string().default("Any bachelors degree"),
       salary: z.string().default("Best in the Industry"),
-      skills: z.string().default(""),
-      responsibilities: z.string().default(""),
+      skills: z.string(),
+      responsibilities: z.string(),
       status: z.enum(["active", "inactive"]).default("active"),
     }),
     execute: async ({ id, ...payload }) => {
