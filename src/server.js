@@ -4,8 +4,10 @@ import { testDBConnection } from "./config/db.js";
 import { testBlogDBConnection, isBlogDbReady } from "./config/blogDb.js";
 import { ensureBlogTables } from "./modules/blog/blog.setup.js";
 import { ensureBlogAgentTables } from "./modules/agents/blog/blogAgent.setup.js";
+import { ensureAgentAutomationsTables } from "./modules/agents/automations/agentAutomations.setup.js";
 import { startPendingProcessor } from "./modules/elevenlabs/fallback/elevenlabs.fallback.service.js";
 import { startLeadsReportScheduler } from "./modules/leads/reports/leadsReport.scheduler.js";
+import { startAgentAutomationsScheduler } from "./modules/agents/automations/agentAutomations.scheduler.js";
 
 dotenv.config();
 
@@ -16,6 +18,7 @@ testBlogDBConnection().then((ok) => {
   if (ok) {
     ensureBlogTables();
     ensureBlogAgentTables();
+    ensureAgentAutomationsTables();
   }
 });
 
@@ -32,4 +35,5 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   startPendingProcessor();
   startLeadsReportScheduler();
+  startAgentAutomationsScheduler();
 });

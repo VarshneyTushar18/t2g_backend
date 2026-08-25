@@ -1,0 +1,247 @@
+import * as automationModel from "./agentAutomations.model.js";
+import * as blogAgentModel from "../blog/blogAgent.model.js";
+import { runBlogAgent } from "../blog/blogAgent.service.js";
+import * as blogModel from "../../blog/blog.model.js";
+import { transporter, getSmtpFromAddress } from "../../../utils/email.service.js";
+
+function parseEmails(value) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return String(value || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function parseBlogCreation(resultText) {
+  const text = String(resultText || "");
+  const idMatch = text.match(/\b(?:id|post id)\D{0,6}(\d{1,10})\b/i);
+  const slugMatch = text.match(/\/blogs\/([a-z0-9-]+)/i);
+  return {
+    postId: idMatch ? Number(idMatch[1]) : null,
+    slug: slugMatch ? slugMatch[1] : null,
+  };
+}
+
+function shouldRunNow(settings) {
+  if (!settings.enabled) return false;
+
+  const now = new Date();
+  if (settings.window_start && now < new Date(settings.window_start)) return false;
+  if (settings.window_end && now > new Date(settings.window_end)) return false;
+
+  const runDays = Array.isArray(settings.run_days) ? settings.run_days : [];
+  if (runDays.length && !runDays.includes(now.getDay())) return false;
+
+  const [hour, minute] = String(settings.run_time || "10:00")
+    .split(":")
+    .map((n) => Number(n));
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const runMinutes = (Number(hour) || 0) * 60 + (Number(minute) || 0);
+  if (nowMinutes < runMinutes || nowMinutes > runMinutes + 4) return false;
+
+  if (settings.last_run_at) {
+    const last = new Date(settings.last_run_at);
+    if (
+      last.getFullYear() === now.getFullYear() &&
+      last.getMonth() === now.getMonth() &&
+      last.getDate() === now.getDate()
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function buildPrompt(topic, status) {
+  const tags = (topic.tags || []).join(", ");
+  const categories = (topic.category_ids || []).join(", ");
+  const author = topic.author_name || "Tech2Globe Digital Team";
+  return [
+    `Create a complete SEO blog post on topic: "${topic.topic}"`,
+    `Set status to ${status}.`,
+    `Author name: ${author}.`,
+    tags ? `Use tags: ${tags}.` : "",
+    categories ? `Use category IDs: ${categories}.` : "",
+    topic.notes ? `Extra instructions: ${topic.notes}` : "",
+    "Mandatory: call create_blog_post tool and then clearly mention created id and public url in final response.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function sendPreviewEmail({ post, topic, settings }) {
+  const recipients = parseEmails(settings.approval_emails);
+  if (!recipients.length) {
+    console.warn("[agent-automations] No sample emails configured — skipping preview mail");
+    return { sent: false, reason: "no_recipients" };
+  }
+  const from = getSmtpFromAddress();
+  if (!from) {
+    console.warn("[agent-automations] SMTP from address missing — skipping preview mail");
+    return { sent: false, reason: "no_from_address" };
+  }
+
+  const adminBase =
+    process.env.CLIENT_URL_ADMIN || "https://manageadmin.tech2globe.tech";
+  const editUrl = `${adminBase.replace(/\/$/, "")}/admin/blog/edit/${post.id}`;
+  const webUrl = `https://www.tech2globe.com/blogs/${post.slug}`;
+
+  await transporter.sendMail({
+    from,
+    to: recipients.join(", "),
+    subject: `[Agent Automations] Blog sample ready: ${post.title}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;max-width:640px;">
+        <h2 style="color:#1e40af;">Agent Automations — blog sample</h2>
+        <p>A new blog was generated automatically. Please review before publishing.</p>
+        <p><strong>Topic:</strong> ${topic.topic}</p>
+        <p><strong>Title:</strong> ${post.title}</p>
+        <p><strong>Status:</strong> ${post.status}</p>
+        <p><strong>Author:</strong> ${post.author}</p>
+        <p style="background:#f8fafc;padding:12px;border-radius:8px;">${post.excerpt || ""}</p>
+        <p>
+          <a href="${editUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;">Review in Admin</a>
+        </p>
+        <p style="font-size:13px;color:#64748b;">
+          Public URL (live after publish): <a href="${webUrl}">${webUrl}</a>
+        </p>
+      </div>
+    `,
+  });
+  console.log(`[agent-automations] Sample email sent to: ${recipients.join(", ")}`);
+  return { sent: true, recipients };
+}
+
+export async function sendTestSampleEmail(recipientsInput) {
+  const recipients = parseEmails(recipientsInput);
+  if (!recipients.length) {
+    const err = new Error("No sample blog email configured");
+    err.status = 400;
+    throw err;
+  }
+  const from = getSmtpFromAddress();
+  if (!from) {
+    const err = new Error("SMTP from address not configured on server");
+    err.status = 503;
+    throw err;
+  }
+
+  const adminBase =
+    process.env.CLIENT_URL_ADMIN || "https://manageadmin.tech2globe.tech";
+
+  await transporter.sendMail({
+    from,
+    to: recipients.join(", "),
+    subject: "[Agent Automations] Test — blog sample email",
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;max-width:640px;">
+        <h2 style="color:#1e40af;">Agent Automations test email</h2>
+        <p>This is a test message. When automation runs, blog samples will be sent to this address.</p>
+        <p><strong>Configured recipient(s):</strong> ${recipients.join(", ")}</p>
+        <p>
+          <a href="${adminBase.replace(/\/$/, "")}/admin/blog/agent-automations">Open Agent Automations</a>
+        </p>
+      </div>
+    `,
+  });
+  return { sent: true, recipients };
+}
+
+async function processTopic(topic, settings) {
+  await automationModel.markTopicProcessing(topic.id);
+
+  const desiredStatus = settings.mode === "auto_publish" ? "publish" : "pending";
+  const prompt = buildPrompt(topic, desiredStatus);
+
+  const user = {
+    id: "agent-automations",
+    sub: "agent-automations",
+    email: "agent-automations@system.local",
+    role: "super_admin",
+    permissions: { blog: { add: true, delete: true, edit: true, view: true } },
+  };
+
+  const thread = await blogAgentModel.createThread({
+    userId: "agent-automations",
+    userEmail: user.email,
+    title: `Automation: ${topic.topic}`.slice(0, 120),
+    agentType: "automation",
+  });
+  await blogAgentModel.addMessage({
+    threadId: thread.id,
+    role: "user",
+    content: prompt,
+  });
+
+  const runResult = await runBlogAgent({ user, threadId: thread.id, message: prompt });
+  await blogAgentModel.addMessage({
+    threadId: thread.id,
+    role: "assistant",
+    content: String(runResult.output || "Done."),
+    toolOutput: { durationMs: runResult.durationMs || null, source: "agent-automations" },
+  });
+
+  const parsed = parseBlogCreation(runResult.output);
+  if (!parsed.postId) {
+    throw new Error("Could not detect created post id from agent output.");
+  }
+  const post = await blogModel.getById(parsed.postId);
+  if (!post) {
+    throw new Error(`Post ${parsed.postId} not found after generation.`);
+  }
+
+  await automationModel.markTopicDone(topic.id, {
+    generated_post_id: post.id,
+    generated_slug: post.slug,
+    generated_title: post.title,
+  });
+
+  if (settings.mode !== "draft_only") {
+    await sendPreviewEmail({ post, topic, settings });
+  }
+
+  return { topicId: topic.id, postId: post.id, title: post.title, status: post.status };
+}
+
+export async function runAutomationTick() {
+  const settings = await automationModel.getSettings();
+  if (!shouldRunNow(settings)) {
+    return { ran: false, reason: "Not in configured schedule window" };
+  }
+
+  const dueTopics = await automationModel.getDueTopics(settings.posts_per_run || 1);
+  if (!dueTopics.length) {
+    await automationModel.markSettingsLastRun(new Date());
+    return { ran: true, processed: 0, results: [] };
+  }
+
+  const results = [];
+  for (const topic of dueTopics) {
+    try {
+      const out = await processTopic(topic, settings);
+      results.push({ ok: true, ...out });
+    } catch (err) {
+      await automationModel.markTopicFailed(topic.id, err.message);
+      results.push({ ok: false, topicId: topic.id, error: err.message });
+    }
+  }
+
+  await automationModel.markSettingsLastRun(new Date());
+  return { ran: true, processed: dueTopics.length, results };
+}
+
+export async function runAutomationNow() {
+  const settings = await automationModel.getSettings();
+  const dueTopics = await automationModel.getDueTopics(settings.posts_per_run || 1);
+  const results = [];
+  for (const topic of dueTopics) {
+    try {
+      const out = await processTopic(topic, settings);
+      results.push({ ok: true, ...out });
+    } catch (err) {
+      await automationModel.markTopicFailed(topic.id, err.message);
+      results.push({ ok: false, topicId: topic.id, error: err.message });
+    }
+  }
+  return { processed: dueTopics.length, results };
+}

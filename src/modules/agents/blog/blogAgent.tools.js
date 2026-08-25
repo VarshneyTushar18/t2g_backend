@@ -58,9 +58,9 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
       tags: z.array(z.string()).nullable().default(null),
       categoryIds: z.array(z.number()).nullable().default(null),
       status: z
-        .enum(["published", "draft", "publish"])
+        .enum(["published", "draft", "publish", "pending"])
         .default("draft")
-        .describe("Use publish for live; draft if user lacks publish permission"),
+        .describe("Use publish for live; pending for review; draft if user lacks publish permission"),
       author_name: z
         .string()
         .nullable()
@@ -89,10 +89,12 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
     }),
     execute: async (params) => {
       try {
-        let resolvedStatus =
-          params.status === "published" || params.status === "publish"
-            ? "publish"
-            : "draft";
+        let resolvedStatus = "draft";
+        if (params.status === "published" || params.status === "publish") {
+          resolvedStatus = "publish";
+        } else if (params.status === "pending") {
+          resolvedStatus = "pending";
+        }
         if (resolvedStatus === "publish" && !canPublish) {
           resolvedStatus = "draft";
         }
