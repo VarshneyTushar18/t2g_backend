@@ -7,7 +7,7 @@ import path from "node:path";
    COMMON LIMIT
 ================================ */
 
-const FILE_LIMIT = 2 * 1024 * 1024; // 2MB (testimonials, portfolio, case studies, resumes)
+const FILE_LIMIT = 2 * 1024 * 1024; // 2MB (testimonials, portfolio, case studies)
 
 /** Blog posts: large HTML content field + featured image. */
 export const BLOG_UPLOAD_LIMITS = {
@@ -16,8 +16,12 @@ export const BLOG_UPLOAD_LIMITS = {
 };
 
 /* ===============================
-   RESUME STORAGE (PDF / DOC)
+   RESUME STORAGE (PDF / DOC / JPG / PNG)
 ================================ */
+
+export const RESUME_FILE_LIMIT = 3 * 1024 * 1024; // 3MB (matches career form)
+
+const RESUME_SAFE_EXTS = [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"];
 
 const resumeStorage = new CloudinaryStorage({
   cloudinary,
@@ -27,7 +31,7 @@ const resumeStorage = new CloudinaryStorage({
       .basename(file.originalname || "resume", ext)
       .replace(/\s+/g, "_")
       .replace(/[^\w.-]/g, "");
-    const safeExt = [".pdf", ".doc", ".docx"].includes(ext) ? ext : "";
+    const safeExt = RESUME_SAFE_EXTS.includes(ext) ? ext : "";
 
     return {
       folder: "tech2globe/resumes",
@@ -43,19 +47,24 @@ const resumeFilter = (req, file, cb) => {
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/jpeg",
+    "image/png",
   ];
 
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error("Only PDF, DOC, and DOCX files are allowed"), false);
+    cb(
+      new Error("Only PDF, DOC, DOCX, JPG, and PNG files are allowed"),
+      false
+    );
   }
 };
 
 export const resumeUpload = multer({
   storage: resumeStorage,
   fileFilter: resumeFilter,
-  limits: { fileSize: FILE_LIMIT },
+  limits: { fileSize: RESUME_FILE_LIMIT },
 });
 
 /* ===============================

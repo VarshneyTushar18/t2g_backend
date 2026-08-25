@@ -1,7 +1,7 @@
 import express from "express";
 import * as CareerController from "./career.controller.js";
 import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
-import { resumeUpload } from "../../config/multer.js";
+import { handleResumeUpload } from "./career.upload.js";
 
 const adminCareer = guardModuleOrApiKey("career");
 const router = express.Router();
@@ -12,7 +12,7 @@ router.get("/jobs/:id", CareerController.getJobById);
 
 router.post(
   "/apply",
-  resumeUpload.single("resume"),
+  handleResumeUpload,
   CareerController.submitApplication
 );
 
