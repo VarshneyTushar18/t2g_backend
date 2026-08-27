@@ -1,5 +1,10 @@
 import { Agent, run } from "@openai/agents";
-import { initOpenAI, DEFAULT_MODEL, isAgentConfigured } from "../lib/openai.js";
+import {
+  initOpenAI,
+  getDefaultModel,
+  isAgentConfigured,
+  refreshConfiguredFlag,
+} from "../lib/openai.js";
 import { createBlogAgentTools } from "./blogAgent.tools.js";
 import * as model from "./blogAgent.model.js";
 
@@ -74,15 +79,16 @@ function buildRunInput(history, userMessage) {
 
 /** @param {{ user: object, threadId: string, message: string }} opts */
 export async function runBlogAgent({ user, threadId, message }) {
+  await refreshConfiguredFlag();
   if (!isAgentConfigured()) {
     const err = new Error(
-      "Blog agent is not configured. Set OPENROUTER_API_KEY on the server.",
+      "Blog agent is not configured. Set API key in Admin → Connect → AI Integrations (or OPENROUTER_API_KEY).",
     );
     err.status = 503;
     throw err;
   }
 
-  initOpenAI();
+  await initOpenAI();
 
   const userId = user.sub || user.id || "unknown";
   const userEmail = user.email || user.apiKeyName || null;
@@ -116,7 +122,7 @@ export async function runBlogAgent({ user, threadId, message }) {
   const agent = new Agent({
     name: "Blog Agent",
     instructions: systemContext,
-    model: DEFAULT_MODEL,
+    model: getDefaultModel(),
     tools,
     modelSettings: { maxTokens: 1800 },
   });

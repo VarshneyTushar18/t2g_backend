@@ -1,5 +1,10 @@
 import { Agent, run } from "@openai/agents";
-import { initOpenAI, DEFAULT_MODEL, isAgentConfigured } from "../lib/openai.js";
+import {
+  initOpenAI,
+  getDefaultModel,
+  isAgentConfigured,
+  refreshConfiguredFlag,
+} from "../lib/openai.js";
 import { createCareerAgentTools } from "./careerAgent.tools.js";
 import * as model from "../blog/blogAgent.model.js";
 
@@ -61,15 +66,16 @@ function buildRunInput(history, userMessage) {
 }
 
 export async function runCareerAgent({ user, threadId, message }) {
+  await refreshConfiguredFlag();
   if (!isAgentConfigured()) {
     const err = new Error(
-      "Career agent is not configured. Set OPENROUTER_API_KEY on server.",
+      "Career agent is not configured. Set API key in Admin → Connect → AI Integrations (or OPENROUTER_API_KEY).",
     );
     err.status = 503;
     throw err;
   }
 
-  initOpenAI();
+  await initOpenAI();
 
   const permissions = user.permissions?.career || {};
   const isSuper = user.role === "super_admin" || user.role === "admin";
@@ -94,7 +100,7 @@ export async function runCareerAgent({ user, threadId, message }) {
       perms,
       userEmail: user.email,
     }),
-    model: DEFAULT_MODEL,
+    model: getDefaultModel(),
     tools,
     modelSettings: { maxTokens: 2800 },
   });

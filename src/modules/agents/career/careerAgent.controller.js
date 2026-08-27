@@ -1,6 +1,6 @@
 import * as model from "../blog/blogAgent.model.js";
 import * as service from "./careerAgent.service.js";
-import { isAgentConfigured } from "../lib/openai.js";
+import { refreshConfiguredFlag, getDefaultModel } from "../lib/openai.js";
 
 function userId(req) {
   return req.user?.sub || req.user?.id;
@@ -12,10 +12,12 @@ function handleError(res, err, fallback) {
 }
 
 export async function getStatus(_req, res) {
+  const configured = await refreshConfiguredFlag();
   res.json({
-    configured: isAgentConfigured(),
+    configured,
     agent: "career",
     name: "Career Agent",
+    model: getDefaultModel(),
   });
 }
 

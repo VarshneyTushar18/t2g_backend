@@ -1,24 +1,28 @@
 import { Readable } from "node:stream";
 import cloudinary from "../../../config/cloudinary.js";
+import { getRuntimeConfig } from "../ai-integrations/aiIntegrations.model.js";
 
 const FOLDER = "tech2globe/blog-agent";
 
 export const IMAGE_MODEL =
   process.env.IMAGE_AGENT_MODEL || "google/gemini-2.5-flash-image-preview";
 
-function openRouterHeaders() {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    const err = new Error("Missing OPENROUTER_API_KEY");
+async function openRouterHeaders() {
+  const config = await getRuntimeConfig();
+  if (!config.apiKey) {
+    const err = new Error(
+      "Missing AI API key. Set it in Admin → Connect → AI Integrations.",
+    );
     err.status = 503;
     throw err;
   }
   return {
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Bearer ${config.apiKey}`,
     "Content-Type": "application/json",
-    "HTTP-Referer":
-      process.env.OPENROUTER_SITE_URL || "https://manageadmin.tech2globe.tech",
-    "X-Title": process.env.OPENROUTER_SITE_NAME || "Tech2Globe Blog Image Agent",
+    "HTTP-Referer": config.siteUrl,
+    "X-Title": config.siteName || "Tech2Globe Blog Image Agent",
+    __baseURL: config.baseURL,
+    __imageModel: config.imageModel || IMAGE_MODEL,
   };
 }
 
@@ -104,11 +108,16 @@ export async function generateAndUploadBlogImage({ prompt, aspect = "16:9" }) {
     `Scene: ${String(prompt || "").trim()}`,
   ].join(" ");
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const headers = await openRouterHeaders();
+  const { __baseURL, __imageModel, ...fetchHeaders } = headers;
+  const base = String(__baseURL || "https://openrouter.ai/api/v1").replace(/\/$/, "");
+  const model = __imageModel || IMAGE_MODEL;
+
+  const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
-    headers: openRouterHeaders(),
+    headers: fetchHeaders,
     body: JSON.stringify({
-      model: IMAGE_MODEL,
+      model,
       messages: [{ role: "user", content: fullPrompt }],
       modalities: ["image", "text"],
     }),
@@ -128,7 +137,7 @@ export async function generateAndUploadBlogImage({ prompt, aspect = "16:9" }) {
   const raw = extractImageDataUrl(payload);
   if (!raw) {
     const err = new Error(
-      "Image model returned no image. Check IMAGE_AGENT_MODEL on the server (needs an image-capable OpenRouter model).",
+      "Image model returned no image. Set an image-capable model in AI Integrations (Image model).",
     );
     err.status = 502;
     throw err;

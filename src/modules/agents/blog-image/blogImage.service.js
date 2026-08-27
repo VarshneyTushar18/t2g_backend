@@ -1,5 +1,10 @@
 import { Agent, run } from "@openai/agents";
-import { initOpenAI, DEFAULT_MODEL, isAgentConfigured } from "../lib/openai.js";
+import {
+  initOpenAI,
+  getDefaultModel,
+  isAgentConfigured,
+  refreshConfiguredFlag,
+} from "../lib/openai.js";
 import { createBlogImageAgentTools } from "./blogImage.tools.js";
 import * as model from "../blog/blogAgent.model.js";
 
@@ -45,15 +50,16 @@ function buildRunInput(history, userMessage) {
 }
 
 export async function sendMessage({ user, threadId, message }) {
+  await refreshConfiguredFlag();
   if (!isAgentConfigured()) {
     const err = new Error(
-      "Image agent is not configured. Set OPENROUTER_API_KEY on the server.",
+      "Image agent is not configured. Set API key in Admin → Connect → AI Integrations.",
     );
     err.status = 503;
     throw err;
   }
 
-  initOpenAI();
+  await initOpenAI();
 
   const userId = user.sub || user.id;
   const thread = await model.getThread(threadId, userId);
@@ -96,7 +102,7 @@ export async function sendMessage({ user, threadId, message }) {
       canEdit,
       userEmail: user.email,
     }),
-    model: DEFAULT_MODEL,
+    model: getDefaultModel(),
     tools,
     modelSettings: { maxTokens: 800 },
   });

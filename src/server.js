@@ -5,6 +5,8 @@ import { testBlogDBConnection, isBlogDbReady } from "./config/blogDb.js";
 import { ensureBlogTables } from "./modules/blog/blog.setup.js";
 import { ensureBlogAgentTables } from "./modules/agents/blog/blogAgent.setup.js";
 import { ensureAgentAutomationsTables } from "./modules/agents/automations/agentAutomations.setup.js";
+import { ensureAiIntegrationsTable } from "./modules/agents/ai-integrations/aiIntegrations.model.js";
+import { refreshConfiguredFlag } from "./modules/agents/lib/openai.js";
 import { startPendingProcessor } from "./modules/elevenlabs/fallback/elevenlabs.fallback.service.js";
 import { startLeadsReportScheduler } from "./modules/leads/reports/leadsReport.scheduler.js";
 import { startAgentAutomationsScheduler } from "./modules/agents/automations/agentAutomations.scheduler.js";
@@ -13,7 +15,15 @@ dotenv.config();
 
 const PORT = process.env.PORT || 5000;
 
-testDBConnection();
+testDBConnection().then(async () => {
+  try {
+    await ensureAiIntegrationsTable();
+    await refreshConfiguredFlag();
+    console.log("[ai-integrations] settings table ready");
+  } catch (err) {
+    console.error("[ai-integrations] setup failed:", err.message);
+  }
+});
 testBlogDBConnection().then((ok) => {
   if (ok) {
     ensureBlogTables();
