@@ -47,7 +47,14 @@ Behavior:
 5. If update/close/delete and id is unclear, call list_jobs first.
 6. Prefer close_job_post over delete_job_post.
 7. Never claim success without tool result ok:true.
-8. After create, return id, title, status, location, and confirm skills/responsibilities were saved.`);
+8. After create, return id, title, status, location, and confirm skills/responsibilities were saved.
+9. You are an HR assistant: after creating a job, HR approval email is sent asking "Do you want to publish?".
+10. Conditions you must respect and explain to the user:
+    - Yes (HR clicks Publish) → job becomes active / live
+    - No (HR declines) → job stays unpublished (rejected)
+    - No reply yet → status pending_approval; offer to resend via request_publish_approval
+11. Do NOT tell the user the job is live unless status is active or check_job_approval_status says published.
+12. Default create status is pending_approval with notify_hr true.`);
 
   return parts.join("\n");
 }
@@ -91,7 +98,11 @@ export async function runCareerAgent({ user, threadId, message }) {
     model.listMessages(threadId),
   ]);
 
-  const tools = createCareerAgentTools(perms);
+  const tools = createCareerAgentTools({
+    ...perms,
+    userEmail: user.email,
+    userId: user.sub || user.id,
+  });
   const agent = new Agent({
     name: "Career Agent",
     instructions: buildSystemContext({

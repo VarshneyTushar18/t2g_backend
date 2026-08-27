@@ -10,6 +10,10 @@ import { refreshConfiguredFlag } from "./modules/agents/lib/openai.js";
 import { startPendingProcessor } from "./modules/elevenlabs/fallback/elevenlabs.fallback.service.js";
 import { startLeadsReportScheduler } from "./modules/leads/reports/leadsReport.scheduler.js";
 import { startAgentAutomationsScheduler } from "./modules/agents/automations/agentAutomations.scheduler.js";
+import {
+  ensureCareerApprovalReady,
+  startCareerApprovalScheduler,
+} from "./modules/agents/career/careerApproval.scheduler.js";
 
 dotenv.config();
 
@@ -23,6 +27,7 @@ testDBConnection().then(async () => {
   } catch (err) {
     console.error("[ai-integrations] setup failed:", err.message);
   }
+  await ensureCareerApprovalReady();
 });
 testBlogDBConnection().then((ok) => {
   if (ok) {
@@ -46,4 +51,5 @@ app.listen(PORT, () => {
   startPendingProcessor();
   startLeadsReportScheduler();
   startAgentAutomationsScheduler();
+  startCareerApprovalScheduler();
 });

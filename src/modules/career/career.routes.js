@@ -1,10 +1,14 @@
 import express from "express";
 import * as CareerController from "./career.controller.js";
+import * as ApprovalController from "../agents/career/careerApproval.controller.js";
 import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 import { handleResumeUpload } from "./career.upload.js";
 
 const adminCareer = guardModuleOrApiKey("career");
 const router = express.Router();
+
+// PUBLIC — HR Yes/No links from email (no auth)
+router.get("/approvals/go", ApprovalController.go);
 
 // PUBLIC
 router.get("/jobs", CareerController.getActiveJobs);
@@ -26,5 +30,12 @@ router.delete("/admin/jobs/:id", ...adminCareer, CareerController.deleteJob);
 router.get("/admin/applications", ...adminCareer, CareerController.getAllApplications);
 router.get("/admin/applications/:id", ...adminCareer, CareerController.getApplicationById);
 router.patch("/admin/applications/:id/status", ...adminCareer, CareerController.updateApplicationStatus);
+
+// ADMIN — Career Agent HR approval settings
+router.get("/admin/approvals", ...adminCareer, ApprovalController.getDashboard);
+router.get("/admin/approvals/settings", ...adminCareer, ApprovalController.getSettings);
+router.put("/admin/approvals/settings", ...adminCareer, ApprovalController.saveSettings);
+router.post("/admin/approvals/test-email", ...adminCareer, ApprovalController.testEmail);
+router.post("/admin/approvals/:jobId/resend", ...adminCareer, ApprovalController.resend);
 
 export default router;
