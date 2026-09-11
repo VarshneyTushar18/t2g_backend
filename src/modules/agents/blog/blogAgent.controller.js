@@ -130,11 +130,41 @@ export async function getGuidelines(req, res) {
 
 export async function updateGuidelines(req, res) {
   try {
-    const content = String(req.body?.content || "").trim();
-    if (!content) {
+    const hasContent = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "content",
+    );
+    const hasHumanize = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "humanizePercent",
+    );
+    if (!hasContent && !hasHumanize) {
+      return res
+        .status(400)
+        .json({ error: "content or humanizePercent is required" });
+    }
+
+    const content = hasContent
+      ? String(req.body?.content || "").trim()
+      : undefined;
+    if (hasContent && !content) {
       return res.status(400).json({ error: "content is required" });
     }
-    const guidelines = await model.updateGuidelines(content, userId(req));
+
+    let humanizePercent;
+    if (hasHumanize) {
+      humanizePercent = Number(req.body.humanizePercent);
+      if (!Number.isFinite(humanizePercent)) {
+        return res
+          .status(400)
+          .json({ error: "humanizePercent must be a number from 0 to 100" });
+      }
+      humanizePercent = Math.min(100, Math.max(0, Math.round(humanizePercent)));
+    }
+
+    const guidelines = await model.updateGuidelines(content, userId(req), 1, {
+      humanizePercent,
+    });
     res.json({ guidelines });
   } catch (err) {
     handleError(res, err, "Failed to update guidelines");

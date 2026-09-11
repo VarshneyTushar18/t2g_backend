@@ -126,23 +126,57 @@ export async function listRecentFeedback({ limit = 15 } = {}) {
   return rows;
 }
 
-export async function getGuidelines(id = 1) {
-  const [rows] = await blogDb.query(
-    "SELECT id, content, updated_by, updated_at FROM blog_agent_guidelines WHERE id = ?",
-    [id],
-  );
-  return rows[0] || { id, content: "" };
+function clampHumanizePercent(value, fallback = 70) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(n)));
 }
 
-export async function updateGuidelines(content, updatedBy, id = 1) {
+export async function getGuidelines(id = 1) {
+  const [rows] = await blogDb.query(
+    "SELECT id, content, humanize_percent, updated_by, updated_at FROM blog_agent_guidelines WHERE id = ?",
+    [id],
+  );
+  const row = rows[0];
+  if (!row) {
+    return { id, content: "", humanize_percent: 70 };
+  }
+  return {
+    ...row,
+    humanize_percent: clampHumanizePercent(row.humanize_percent, 70),
+  };
+}
+
+export async function updateGuidelines(
+  content,
+  updatedBy,
+  id = 1,
+  { humanizePercent } = {},
+) {
+  const existing = await getGuidelines(id);
+  const nextHumanize =
+    humanizePercent === undefined
+      ? existing.humanize_percent
+      : clampHumanizePercent(humanizePercent, existing.humanize_percent);
+  const nextContent =
+    content === undefined || content === null
+      ? existing.content
+      : String(content);
+
   await blogDb.query(
-    `INSERT INTO blog_agent_guidelines (id, content, updated_by)
-     VALUES (?, ?, ?)
+    `INSERT INTO blog_agent_guidelines (id, content, humanize_percent, updated_by)
+     VALUES (?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        content = VALUES(content),
+       humanize_percent = VALUES(humanize_percent),
        updated_by = VALUES(updated_by),
        updated_at = CURRENT_TIMESTAMP`,
-    [id, content, updatedBy ? String(updatedBy) : null],
+    [
+      id,
+      nextContent,
+      nextHumanize,
+      updatedBy ? String(updatedBy) : null,
+    ],
   );
   return getGuidelines(id);
 }

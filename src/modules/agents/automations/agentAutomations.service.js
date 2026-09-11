@@ -73,8 +73,8 @@ function buildPrompt(topic, status) {
     tags ? `Use tags: ${tags}.` : "",
     categories ? `Use category IDs: ${categories}.` : "",
     topic.notes ? `Extra instructions: ${topic.notes}` : "",
-    "Mandatory: call create_blog_post tool and then clearly mention created id and public url in final response.",
-    "Write like a top industry blog (HubSpot/Medium): clear H2s, short paragraphs, bullet lists, no raw markdown asterisks.",
+    "Mandatory: call create_blog_post tool and then clearly mention created id and public url in final response (include a line: id: {number}).",
+    "Follow the admin content mix setting from system instructions (humanize % vs AI %). Clear H2s, short paragraphs, no raw markdown asterisks.",
   ]
     .filter(Boolean)
     .join("\n");

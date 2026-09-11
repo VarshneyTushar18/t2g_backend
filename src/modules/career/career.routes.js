@@ -13,6 +13,7 @@ router.get("/approvals/go", ApprovalController.go);
 // PUBLIC
 router.get("/jobs", CareerController.getActiveJobs);
 router.get("/jobs/:id", CareerController.getJobById);
+router.get("/check-application", CareerController.checkApplication);
 
 router.post(
   "/apply",

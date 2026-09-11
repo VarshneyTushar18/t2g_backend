@@ -8,13 +8,82 @@ import {
 import { createBlogAgentTools } from "./blogAgent.tools.js";
 import * as model from "./blogAgent.model.js";
 
-function buildSystemContext({ guidelines, feedback, canPublish, userEmail }) {
+function clampHumanizePercent(value, fallback = 70) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
+function temperatureForHumanize(humanizePercent) {
+  // More humanize → slightly higher temperature for less template-like prose
+  const h = clampHumanizePercent(humanizePercent, 70) / 100;
+  return Math.round((0.45 + h * 0.5) * 100) / 100; // 0.45 .. 0.95
+}
+
+function buildWritingStyleBlock(humanizePercent) {
+  const human = clampHumanizePercent(humanizePercent, 70);
+  const ai = 100 - human;
+
+  const intensity =
+    human >= 80
+      ? "Very aggressive humanization — prioritize natural voice over polished AI symmetry."
+      : human >= 55
+        ? "Strong humanization — sound like a senior editor, not ChatGPT."
+        : human >= 30
+          ? "Balanced mix — clear structure with some natural voice."
+          : "Light humanization — keep clear, structured AI-assisted writing.";
+
+  return `
+## Writing style — ${human}% human / ${ai}% AI structure (critical)
+Target mix set by admin: **${human}% humanized voice** and **${ai}% AI-assisted structure** (outline, SEO, headings).
+${intensity}
+Target voice: HubSpot / Medium / Ahrefs vibe when humanize is high; cleaner structured SEO prose when AI % is higher.
+
+Humanization rules (scale intensity with the ${human}% human target):
+- Use contractions (you'll, it's, don't, we're) and natural spoken rhythm${human >= 50 ? " heavily" : ""}.
+- Mix short punchy sentences with longer ones. Avoid uniform paragraph length.
+- Start some paragraphs mid-thought or with a concrete example, not a thesis statement.
+- Prefer specific numbers, anecdotes, and "I / we / you" framing over abstract claims.
+- Occasional mild opinion or soft humor is fine; stay professional for Tech2Globe.
+- Vary transitions — never stack "Furthermore", "Moreover", "In conclusion", "Additionally".
+- Ban AI tells: "In today's digital landscape", "delve into", "it's important to note", "unlock the power", "game-changer", "comprehensive guide", "ever-evolving", "leverage" (unless industry jargon fits), "tapestry", "realm", "navigate the complexities".
+- Do NOT use em dashes excessively or perfectly parallel bullet lists that all start the same way.
+- Do NOT end every section with a summary sentence that restates the heading.
+${human >= 60 ? "- Keep some imperfect flow — human drafts are slightly uneven; perfect symmetry reads as AI." : "- Keep writing clean and scannable; light natural tone is enough."}
+
+Structure (the ${ai}% AI-assisted part):
+  1) Strong H1-style title (passed as title, not inside body)
+  2) Short hook paragraph (2–3 sentences) — concrete, not hype
+  3) 4–7 H2 sections with optional H3s
+  4) Short paragraphs (mostly 2–4 sentences)
+  5) Bullet or numbered lists only when they truly help
+  6) Bold sparingly for key phrases only
+  7) Soft CTA ending (no hard sell, no "In conclusion")
+- Length: ~700–1200 words unless user asks otherwise.
+- SEO: focus keyword in title + first paragraph + one H2; meta description 120–160 chars — weave naturally, never keyword-stuff.`;
+}
+
+function buildSystemContext({
+  guidelines,
+  feedback,
+  canPublish,
+  userEmail,
+  humanizePercent = 70,
+}) {
   const parts = [];
+  const human = clampHumanizePercent(
+    humanizePercent ?? guidelines?.humanize_percent,
+    70,
+  );
+  const ai = 100 - human;
 
   parts.push(
     `You are Tech2Globe Blog Agent — an expert content writer integrated into the admin panel.`,
   );
   parts.push(`Logged-in user: ${userEmail || "admin"}.`);
+  parts.push(
+    `Content mix setting: ${human}% humanized / ${ai}% AI structure. Always honor this ratio.`,
+  );
 
   if (guidelines?.content) {
     parts.push(`\n## Brand guidelines (always follow)\n${guidelines.content}`);
@@ -44,20 +113,9 @@ function buildSystemContext({ guidelines, feedback, canPublish, userEmail }) {
     );
   }
 
-  parts.push(`
-## Writing style (match top industry blogs: HubSpot, Shopify, Ahrefs, Medium)
-- Sound human and expert — clear, practical, scannable. Not robotic or keyword-stuffed.
-- Structure every post like a famous blog:
-  1) Strong H1-style title (passed as title, not inside body)
-  2) Short hook paragraph (2–3 sentences)
-  3) 4–7 H2 sections with optional H3s
-  4) Short paragraphs (2–4 sentences max)
-  5) Bullet or numbered lists for tips/steps
-  6) Bold sparingly for key phrases only
-  7) Soft CTA ending (no hard sell)
-- Length: ~700–1200 words unless user asks otherwise.
-- SEO: focus keyword in title + first paragraph + one H2; meta description 120–160 chars.
+  parts.push(buildWritingStyleBlock(human));
 
+  parts.push(`
 ## Content format rules (critical — avoid ugly published posts)
 - Write body as clean Markdown OR semantic HTML.
 - Allowed Markdown: ## / ### headings, paragraphs, - lists, 1. lists, **bold**, *italic*, [links](https://...), images.
@@ -72,14 +130,20 @@ function buildSystemContext({ guidelines, feedback, canPublish, userEmail }) {
 3. Decide image type:
    - If user explicitly asks for AI-generated images (or says "generate images", "AI images", "generated cover"), call generate_blog_image.
    - Otherwise call pick_blog_image (royalty-free Unsplash).
-4. Generate title, clean Markdown/HTML content, excerpt, slug, tags.
+4. Generate title, clean Markdown/HTML content, excerpt, slug, tags — apply the ${human}% human / ${ai}% AI style above.
 5. If you used generate_blog_image, pass its URL as featured_image and also optionally generate 1–2 inline images and pass them as inline_image_urls.
 6. Call create_blog_post with featured_image and inline_image_urls (or add_inline_images true for non-AI images).
 7. Always include a cover image unless the user says no images.
 8. If they paste an image URL, use it as featured_image.
 9. If they ask to add images to an existing post, call add_images_to_post.
-10. If they ask to improve / rewrite / fix a post (or feedback says 👎), call update_blog_post with the existing id and improved content — do not create a duplicate unless they ask for a new post.
-11. Reply with result (id, slug, status, url, featured_image) — never invent success.
+10. If they ask to improve / rewrite / fix a post (or feedback says 👎), call update_blog_post with the existing id and improved content at the same ${human}% human / ${ai}% AI mix — do not create a duplicate unless they ask for a new post.
+11. Reply with result in this exact readable form (never invent success):
+    Created draft
+    id: {numeric_id}
+    slug: {slug}
+    status: draft|publish
+    url: https://www.tech2globe.com/blogs/{slug}
+    The numeric id line is REQUIRED so the admin Preview button works.
 
 Delete: list_blog_posts if needed, then delete_blog_post only on explicit request.
 Public URL format: https://www.tech2globe.com/blogs/{slug}`);
@@ -87,30 +151,50 @@ Public URL format: https://www.tech2globe.com/blogs/{slug}`);
   return parts.join("\n");
 }
 
+function parseToolOutput(raw) {
+  let output = raw;
+  if (output == null) return null;
+  if (typeof output === "string") {
+    try {
+      output = JSON.parse(output);
+    } catch {
+      return null;
+    }
+  }
+  // Some SDK versions wrap as { type: "text", text: "..." }
+  if (output?.text && typeof output.text === "string") {
+    try {
+      output = JSON.parse(output.text);
+    } catch {
+      /* keep as-is */
+    }
+  }
+  return output;
+}
+
 function extractToolPosts(result) {
   const posts = [];
-  for (const item of result?.newItems || []) {
-    if (item?.type !== "tool_call_output_item") continue;
-    let output = item.output;
-    if (output == null && item.rawItem?.output != null) {
-      output = item.rawItem.output;
+  const seen = new Set();
+  const items = [
+    ...(Array.isArray(result?.newItems) ? result.newItems : []),
+    ...(Array.isArray(result?.items) ? result.items : []),
+  ];
+
+  for (const item of items) {
+    const type = item?.type || item?.rawItem?.type;
+    if (
+      type &&
+      type !== "tool_call_output_item" &&
+      type !== "function_call_result" &&
+      type !== "tool_result"
+    ) {
+      continue;
     }
-    if (typeof output === "string") {
-      try {
-        output = JSON.parse(output);
-      } catch {
-        continue;
-      }
-    }
-    // Some SDK versions wrap as { type: "text", text: "..." }
-    if (output?.text && typeof output.text === "string") {
-      try {
-        output = JSON.parse(output.text);
-      } catch {
-        /* keep as-is */
-      }
-    }
-    if (output && output.ok && output.id) {
+    const output = parseToolOutput(
+      item?.output ?? item?.rawItem?.output ?? item?.result,
+    );
+    if (output && output.ok && output.id && !seen.has(output.id)) {
+      seen.add(output.id);
       posts.push({
         id: output.id,
         slug: output.slug,
@@ -172,6 +256,7 @@ export async function runBlogAgent({ user, threadId, message }) {
     feedback,
     canPublish: effectiveCanPublish,
     userEmail,
+    humanizePercent: guidelines?.humanize_percent ?? 70,
   });
 
   const tools = createBlogAgentTools({
@@ -179,12 +264,20 @@ export async function runBlogAgent({ user, threadId, message }) {
     canDelete: effectiveCanDelete,
   });
 
+  const humanizePercent = clampHumanizePercent(
+    guidelines?.humanize_percent,
+    70,
+  );
+
   const agent = new Agent({
     name: "Blog Agent",
     instructions: systemContext,
     model: getDefaultModel(),
     tools,
-    modelSettings: { maxTokens: 4500 },
+    modelSettings: {
+      maxTokens: 4500,
+      temperature: temperatureForHumanize(humanizePercent),
+    },
   });
 
   const runInput = buildRunInput(history, message);
