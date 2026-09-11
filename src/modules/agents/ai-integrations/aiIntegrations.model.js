@@ -97,7 +97,7 @@ function mapPublic(row) {
     image_model: row.image_model || "",
     site_url: row.site_url || "",
     site_name: row.site_name || "Tech2Globe Agents",
-    enabled: Boolean(row.enabled),
+    enabled: Boolean(Number(row.enabled)),
     source: "database",
     updated_at: row.updated_at || null,
     updated_by: row.updated_by || null,
@@ -152,9 +152,26 @@ export async function getRuntimeConfig() {
     console.error("[ai-integrations] getRuntimeConfig DB:", err.message);
   }
 
-  const dbKey = row?.enabled ? decryptSecret(row.api_key_enc) : null;
+  const dbEnabled = row ? Boolean(Number(row.enabled)) : false;
+  const hasDbSecret = Boolean(row?.api_key_enc);
+  const dbKey = dbEnabled && hasDbSecret ? decryptSecret(row.api_key_enc) : null;
   const envKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || "";
-  const apiKey = dbKey || envKey || "";
+
+  // If DB settings are on and a key is stored, never silently fall back to .env
+  // (that caused OpenAI UI + OpenRouter env key mismatches / 401s).
+  let apiKey = "";
+  let source = "none";
+  if (dbEnabled && hasDbSecret) {
+    if (dbKey) {
+      apiKey = dbKey;
+      source = "database";
+    } else {
+      source = "decrypt_error";
+    }
+  } else if (envKey) {
+    apiKey = envKey;
+    source = "env";
+  }
 
   const provider = row?.provider || "openrouter";
   const meta = PROVIDERS[provider] || PROVIDERS.openrouter;
@@ -182,8 +199,8 @@ export async function getRuntimeConfig() {
       row?.site_name ||
       process.env.OPENROUTER_SITE_NAME ||
       "Tech2Globe Agents",
-    enabled: row ? Boolean(row.enabled) : true,
-    source: dbKey ? "database" : envKey ? "env" : "none",
+    enabled: row ? dbEnabled : true,
+    source,
     configured: Boolean(apiKey),
   };
 }

@@ -28,7 +28,16 @@ export async function updateSettings(req, res) {
     const body = req.body || {};
     const settings = await model.upsertSettings(body, req.user?.sub || req.user?.email);
     resetAgentClient();
-    res.json({ settings, message: "AI settings saved. Agents will use the new config." });
+    const runtime = await model.getRuntimeConfig();
+    res.json({
+      settings: {
+        ...settings,
+        runtime_source: runtime.source,
+        runtime_configured: runtime.configured,
+        runtime_model: runtime.defaultModel,
+      },
+      message: "AI settings saved. Agents will use the new config.",
+    });
   } catch (err) {
     handleError(res, err, "Failed to save AI settings");
   }

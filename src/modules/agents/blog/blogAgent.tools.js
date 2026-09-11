@@ -16,30 +16,154 @@ function slugify(title) {
     .slice(0, 80);
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Convert inline markdown (**bold**, *italic*, links, code) → HTML. Strips leftover asterisks. */
+function formatInline(text) {
+  let s = escapeHtml(text);
+  s = s.replace(
+    /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g,
+    '<img src="$2" alt="$1" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;" />',
+  );
+  s = s.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+  );
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/__(.+?)__/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1<em>$2</em>");
+  // Remove leftover emphasis asterisks only (never strip underscores — breaks target="_blank")
+  s = s.replace(/\*{1,2}/g, "");
+  return s;
+}
+
+function cleanMarkdownInHtml(html) {
+  return String(html || "")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n<]+)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/\*{1,2}/g, "");
+}
+
+/**
+ * Convert agent Markdown (or mixed HTML) into clean blog HTML.
+ * Supports headings, paragraphs, lists, blockquotes, images, bold/italic/links.
+ */
 function markdownToHtml(md) {
   const text = String(md || "").trim();
   if (!text) return "";
-  if (/<[a-z][\s\S]*>/i.test(text)) return text;
-  return text
-    .split(/\n{2,}/)
-    .map((block) => {
-      const line = block.trim();
-      if (!line) return "";
-      if (line.startsWith("### ")) return `<h3>${line.slice(4)}</h3>`;
-      if (line.startsWith("## ")) return `<h2>${line.slice(3)}</h2>`;
-      if (line.startsWith("# ")) return `<h1>${line.slice(2)}</h1>`;
-      const mdImg = line.match(/^!\[([^\]]*)\]\((https?:\/\/[^)]+)\)$/);
-      if (mdImg) {
-        return `<figure class="blog-agent-image"><img src="${mdImg[2]}" alt="${mdImg[1]}" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;" /><figcaption>${mdImg[1]}</figcaption></figure>`;
+
+  // Already HTML (CKEditor / agent HTML output) — still scrub leftover **bold**
+  if (/<(h[1-6]|p|ul|ol|li|div|article|section|figure)\b/i.test(text)) {
+    return cleanMarkdownInHtml(text);
+  }
+
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+
+  const flushParagraph = (buf) => {
+    const joined = buf.join(" ").trim();
+    if (joined) out.push(`<p>${formatInline(joined)}</p>`);
+    buf.length = 0;
+  };
+
+  while (i < lines.length) {
+    const raw = lines[i];
+    const line = raw.trim();
+
+    if (!line) {
+      i += 1;
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      const level = Math.min(heading[1].length, 4);
+      out.push(`<h${level}>${formatInline(heading[2])}</h${level}>`);
+      i += 1;
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) {
+      out.push("<hr />");
+      i += 1;
+      continue;
+    }
+
+    if (line.startsWith("> ")) {
+      const quoteLines = [];
+      while (i < lines.length && lines[i].trim().startsWith(">")) {
+        quoteLines.push(lines[i].trim().replace(/^>\s?/, ""));
+        i += 1;
       }
-      const withBreaks = line
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/\n/g, "<br />");
-      return `<p>${withBreaks}</p>`;
-    })
-    .filter(Boolean)
-    .join("");
+      out.push(`<blockquote><p>${formatInline(quoteLines.join(" "))}</p></blockquote>`);
+      continue;
+    }
+
+    const mdImg = line.match(/^!\[([^\]]*)\]\((https?:\/\/[^)]+)\)$/);
+    if (mdImg) {
+      out.push(
+        `<figure class="blog-agent-image"><img src="${mdImg[2]}" alt="${escapeHtml(mdImg[1])}" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;" /><figcaption>${formatInline(mdImg[1])}</figcaption></figure>`,
+      );
+      i += 1;
+      continue;
+    }
+
+    if (/^[-*+]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
+        items.push(`<li>${formatInline(lines[i].trim().replace(/^[-*+]\s+/, ""))}</li>`);
+        i += 1;
+      }
+      out.push(`<ul>${items.join("")}</ul>`);
+      continue;
+    }
+
+    if (/^\d+[.)]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+[.)]\s+/.test(lines[i].trim())) {
+        items.push(
+          `<li>${formatInline(lines[i].trim().replace(/^\d+[.)]\s+/, ""))}</li>`,
+        );
+        i += 1;
+      }
+      out.push(`<ol>${items.join("")}</ol>`);
+      continue;
+    }
+
+    const para = [line];
+    i += 1;
+    while (i < lines.length) {
+      const next = lines[i].trim();
+      if (
+        !next ||
+        /^(#{1,4})\s+/.test(next) ||
+        /^[-*+]\s+/.test(next) ||
+        /^\d+[.)]\s+/.test(next) ||
+        next.startsWith("> ") ||
+        /^!\[/.test(next) ||
+        /^(-{3,}|\*{3,}|_{3,})$/.test(next)
+      ) {
+        break;
+      }
+      para.push(next);
+      i += 1;
+    }
+    flushParagraph(para);
+  }
+
+  return out.join("\n");
 }
+
+export { markdownToHtml };
 
 /** @param {{ canPublish: boolean, canDelete: boolean }} permissions */
 export function createBlogAgentTools({ canPublish, canDelete }) {
@@ -49,7 +173,11 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
       "Create or publish a blog post on Tech2Globe. Use publish status only when allowed.",
     parameters: z.object({
       title: z.string().describe("Blog title"),
-      content: z.string().describe("Full blog body (Markdown or HTML)"),
+      content: z
+        .string()
+        .describe(
+          "Full blog body as clean Markdown OR semantic HTML. Prefer ## headings, short paragraphs, bullet lists. Never leave raw ** or * asterisks visible.",
+        ),
       excerpt: z.string().nullable().default(null),
       metaDescription: z.string().nullable().default(null),
       metaTitle: z.string().nullable().default(null),
@@ -156,6 +284,105 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
         };
       } catch (err) {
         return { ok: false, error: err.message || "Create failed" };
+      }
+    },
+  });
+
+  const updateBlogPost = tool({
+    name: "update_blog_post",
+    description:
+      "Update an existing blog post (draft or published) by id. Use when the user asks to improve, rewrite, or fix a post you already created.",
+    parameters: z.object({
+      id: z.number().int().describe("Blog post numeric id"),
+      title: z.string().nullable().default(null),
+      content: z
+        .string()
+        .nullable()
+        .default(null)
+        .describe("Full body as clean Markdown or HTML (no raw ** asterisks in final HTML)"),
+      excerpt: z.string().nullable().default(null),
+      metaDescription: z.string().nullable().default(null),
+      metaTitle: z.string().nullable().default(null),
+      focusKeyword: z.string().nullable().default(null),
+      slug: z.string().nullable().default(null),
+      tags: z.array(z.string()).nullable().default(null),
+      status: z
+        .enum(["published", "draft", "publish", "pending"])
+        .nullable()
+        .default(null),
+      author_name: z.string().nullable().default(null),
+      featured_image: z.string().nullable().default(null),
+    }),
+    execute: async (params) => {
+      try {
+        const existing = await blogModel.getById(params.id);
+        if (!existing) return { ok: false, error: "Post not found" };
+
+        let resolvedStatus = existing.status;
+        if (params.status === "published" || params.status === "publish") {
+          resolvedStatus = "publish";
+        } else if (params.status === "pending") {
+          resolvedStatus = "pending";
+        } else if (params.status === "draft") {
+          resolvedStatus = "draft";
+        }
+        if (resolvedStatus === "publish" && !canPublish) {
+          resolvedStatus = existing.status === "publish" ? "publish" : "draft";
+        }
+
+        const content =
+          params.content != null
+            ? markdownToHtml(params.content)
+            : existing.content;
+
+        const seo = {
+          ...(existing.seo || {}),
+          meta_title: (
+            params.metaTitle ||
+            params.title ||
+            existing.seo?.meta_title ||
+            existing.title
+          ).slice(0, 60),
+          meta_description: (
+            params.metaDescription ||
+            params.excerpt ||
+            existing.seo?.meta_description ||
+            existing.excerpt ||
+            existing.title
+          ).slice(0, 160),
+          focus_keyword:
+            params.focusKeyword ||
+            existing.seo?.focus_keyword ||
+            (params.tags && params.tags[0]) ||
+            existing.title.split(" ")[0],
+        };
+
+        const updated = await blogModel.updatePost(existing.id, {
+          title: params.title || existing.title,
+          slug: params.slug || existing.slug,
+          excerpt: params.excerpt || existing.excerpt,
+          content,
+          featured_image: params.featured_image || existing.featured_image,
+          status: resolvedStatus,
+          author_name: params.author_name || existing.author,
+          categories: existing.categories || [],
+          tags: params.tags || existing.tags || [],
+          seo,
+        });
+
+        return {
+          ok: true,
+          id: updated.id,
+          slug: updated.slug,
+          title: updated.title,
+          status: updated.status,
+          author_name: updated.author,
+          url: `https://www.tech2globe.com/blogs/${updated.slug}`,
+          featured_image: updated.featured_image,
+          updated: true,
+        };
+      } catch (err) {
+        return { ok: false, error: err.message || "Update failed" };
       }
     },
   });
@@ -313,6 +540,7 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
     pickBlogImage,
     generateBlogImage,
     createBlogPost,
+    updateBlogPost,
     addImagesToPost,
     deleteBlogPost,
     listBlogPosts,
