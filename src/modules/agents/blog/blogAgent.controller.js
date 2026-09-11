@@ -159,7 +159,9 @@ export async function updateGuidelines(req, res) {
           .status(400)
           .json({ error: "humanizePercent must be a number from 0 to 100" });
       }
-      humanizePercent = Math.min(100, Math.max(0, Math.round(humanizePercent)));
+      humanizePercent = Math.round(
+        Math.min(100, Math.max(0, humanizePercent)) / 5,
+      ) * 5;
     }
 
     const guidelines = await model.updateGuidelines(content, userId(req), 1, {

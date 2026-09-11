@@ -129,7 +129,9 @@ export async function listRecentFeedback({ limit = 15 } = {}) {
 function clampHumanizePercent(value, fallback = 70) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
-  return Math.min(100, Math.max(0, Math.round(n)));
+  // Snap to nearest 5 so AI% is always a clean number (never 31%)
+  const snapped = Math.round(Math.min(100, Math.max(0, n)) / 5) * 5;
+  return snapped;
 }
 
 export async function getGuidelines(id = 1) {
