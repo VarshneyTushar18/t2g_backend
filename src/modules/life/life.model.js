@@ -1,13 +1,20 @@
 import pool from "../../config/db.js";
+import { resolveMediaUrl, resolveMediaUrls } from "../../utils/mediaUrl.js";
 
 // ── HELPER ──────────────────────────────────────────
-const parseGallery = (row) => ({
-  ...row,
-  gallery:
+const parseGallery = (row) => {
+  const gallery =
     typeof row.gallery === "string"
       ? JSON.parse(row.gallery)
-      : row.gallery || [],
-});
+      : row.gallery || [];
+
+  return {
+    ...row,
+    banner: resolveMediaUrl(row.banner),
+    category_img: resolveMediaUrl(row.category_img),
+    gallery: resolveMediaUrls(gallery),
+  };
+};
 
 // ── PUBLIC ──────────────────────────────────────────
 
@@ -177,4 +184,80 @@ export const updateLifeItem = async (
 export const deleteLifeItem = async (id) => {
   await pool.query(`DELETE FROM life_gallery WHERE id = ?`, [id]);
   return true;
+};
+
+/** Append URLs to an item's gallery (bulk / folder upload). */
+export const appendGalleryImages = async (id, newUrls) => {
+  const existing = await getLifeItemByIdAdmin(id);
+  if (!existing) return null;
+
+  const gallery = [...(existing.gallery || []), ...newUrls];
+
+  await pool.query(`UPDATE life_gallery SET gallery = ? WHERE id = ?`, [
+    JSON.stringify(gallery),
+    id,
+  ]);
+
+  return getLifeItemByIdAdmin(id);
+};
+
+/** Replace gallery with an exact URL list (delete/reorder without re-upload). */
+export const setGalleryImages = async (id, gallery) => {
+  const existing = await getLifeItemByIdAdmin(id);
+  if (!existing) return null;
+
+  const list = Array.isArray(gallery) ? gallery : [];
+
+  await pool.query(`UPDATE life_gallery SET gallery = ? WHERE id = ?`, [
+    JSON.stringify(list),
+    id,
+  ]);
+
+  return getLifeItemByIdAdmin(id);
+};
+
+/** Remove specific URLs from the gallery. */
+export const removeGalleryImages = async (id, urlsToRemove) => {
+  const existing = await getLifeItemByIdAdmin(id);
+  if (!existing) return null;
+
+  const remove = new Set(
+    (Array.isArray(urlsToRemove) ? urlsToRemove : []).filter(Boolean),
+  );
+  const gallery = (existing.gallery || []).filter((url) => !remove.has(url));
+
+  await pool.query(`UPDATE life_gallery SET gallery = ? WHERE id = ?`, [
+    JSON.stringify(gallery),
+    id,
+  ]);
+
+  return getLifeItemByIdAdmin(id);
+};
+
+export const getAllImages = async () => {
+  const [rows] = await pool.query(`
+    SELECT banner, gallery FROM life_gallery
+  `);
+
+  let allImages = [];
+
+  rows.forEach(row => {
+    if (row.banner) {
+      allImages.push(row.banner);
+    }
+
+    if (row.gallery) {
+      try {
+        const parsed = typeof row.gallery === "string"
+          ? JSON.parse(row.gallery)
+          : row.gallery;
+
+        allImages.push(...parsed);
+      } catch (e) {
+        console.error("Gallery parse error", e);
+      }
+    }
+  });
+
+  return allImages;
 };

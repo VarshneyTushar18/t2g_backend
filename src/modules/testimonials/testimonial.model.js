@@ -1,13 +1,5 @@
 import db from "../../config/db.js";
-
-// ✅ Converts relative paths → full URLs so frontend never gets broken images
-const BASE_URL = process.env.API_URL || "http://localhost:5000";
-
-const toAbsUrl = (path) => {
-  if (!path) return null;
-  if (path.startsWith("http")) return path; // already a full URL, leave it
-  return `${BASE_URL}${path}`;
-};
+import { resolveMediaUrl } from "../../utils/mediaUrl.js";
 
 export const getAllTestimonials = async () => {
   const [rows] = await db.query(`
@@ -28,8 +20,8 @@ export const getAllTestimonials = async () => {
   // ✅ Prefix image paths before sending to frontend
   return rows.map((row) => ({
     ...row,
-    avatar:      toAbsUrl(row.avatar),
-    companyLogo: toAbsUrl(row.companyLogo),
+    avatar:      resolveMediaUrl(row.avatar),
+    companyLogo: resolveMediaUrl(row.companyLogo),
   }));
 };
 
@@ -56,8 +48,8 @@ export const getTestimonialById = async (id) => {
   // ✅ Prefix image paths before sending to frontend
   return {
     ...row,
-    avatar:      toAbsUrl(row.avatar),
-    companyLogo: toAbsUrl(row.companyLogo),
+    avatar:      resolveMediaUrl(row.avatar),
+    companyLogo: resolveMediaUrl(row.companyLogo),
   };
 };
 

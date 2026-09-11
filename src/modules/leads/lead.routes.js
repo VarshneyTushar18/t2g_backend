@@ -3,28 +3,40 @@ import {
     createLead,
     getLeads,
     getLeadById,
-    updateLead,
-    deleteLead
+    deleteLead,
+    exportLeads,
+    getLeadStats,
 } from "../leads/lead.controller.js";
+import shopifyIntakeRoutes from "./shopify-intake/shopifyIntake.routes.js";
+import amazonOnboardingRoutes from "./amazon-onboarding/amazonOnboarding.routes.js";
+import amazonLeadsRoutes from "./amazon-leads/amazonLeads.routes.js";
 
 import { validateLead } from "../../middleware/validation.js";
-import { verifyAdmin } from "../auth/auth.middleware.js";
+import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 
 const router = express.Router();
+const adminLeads = guardModuleOrApiKey("leads");
+
+router.use("/shopify-intake", shopifyIntakeRoutes);
+router.use("/amazon-onboarding", amazonOnboardingRoutes);
+router.use("/amazon-leads", amazonLeadsRoutes);
 
 // CREATE
 router.post("/", validateLead, createLead);
 
 // READ ALL
-router.get("/", verifyAdmin, getLeads);
+router.get("/", ...adminLeads, getLeads);
+
+// EXPORT CSV (must be before /:id)
+router.get("/export", ...adminLeads, exportLeads);
+
+// DASHBOARD STATS (must be before /:id)
+router.get("/stats", ...adminLeads, getLeadStats);
 
 // READ SINGLE
-router.get("/:id", verifyAdmin, getLeadById);
-
-// UPDATE
-router.put("/:id", verifyAdmin, updateLead);
+router.get("/:id", ...adminLeads, getLeadById);
 
 // DELETE
-router.delete("/:id", verifyAdmin, deleteLead);
+router.delete("/:id", ...adminLeads, deleteLead);
 
 export default router;

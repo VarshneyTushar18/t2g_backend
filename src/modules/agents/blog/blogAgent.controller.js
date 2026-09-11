@@ -1,0 +1,142 @@
+import * as model from "./blogAgent.model.js";
+import * as service from "./blogAgent.service.js";
+import { refreshConfiguredFlag, getDefaultModel } from "../lib/openai.js";
+
+function userId(req) {
+  return req.user?.sub || req.user?.id;
+}
+
+function handleError(res, err, fallback) {
+  console.error(fallback, err);
+  const status = err.status || 500;
+  res.status(status).json({
+    error: err.message || fallback,
+  });
+}
+
+export async function getStatus(req, res) {
+  const configured = await refreshConfiguredFlag();
+  res.json({
+    configured,
+    agent: "blog",
+    name: "Blog Agent",
+    model: getDefaultModel(),
+  });
+}
+
+export async function listThreads(req, res) {
+  try {
+    const threads = await model.listThreads(userId(req), { agentType: "writer" });
+    res.json({ threads });
+  } catch (err) {
+    handleError(res, err, "Failed to list threads");
+  }
+}
+
+export async function createThread(req, res) {
+  try {
+    const title = req.body?.title?.trim() || null;
+    const thread = await model.createThread({
+      userId: userId(req),
+      userEmail: req.user?.email || req.user?.apiKeyName || null,
+      title,
+      agentType: "writer",
+    });
+    res.status(201).json({ thread });
+  } catch (err) {
+    handleError(res, err, "Failed to create thread");
+  }
+}
+
+export async function getThread(req, res) {
+  try {
+    const thread = await model.getThread(req.params.threadId, userId(req));
+    if (!thread) return res.status(404).json({ error: "Thread not found" });
+    res.json({ thread });
+  } catch (err) {
+    handleError(res, err, "Failed to get thread");
+  }
+}
+
+export async function deleteThread(req, res) {
+  try {
+    const ok = await model.deleteThread(req.params.threadId, userId(req));
+    if (!ok) return res.status(404).json({ error: "Thread not found" });
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, "Failed to delete thread");
+  }
+}
+
+export async function getMessages(req, res) {
+  try {
+    const thread = await model.getThread(req.params.threadId, userId(req));
+    if (!thread) return res.status(404).json({ error: "Thread not found" });
+    const messages = await model.listMessages(req.params.threadId);
+    res.json({ messages });
+  } catch (err) {
+    handleError(res, err, "Failed to get messages");
+  }
+}
+
+export async function sendMessage(req, res) {
+  try {
+    const message = req.body?.message;
+    const result = await service.sendMessage({
+      user: req.user,
+      threadId: req.params.threadId,
+      message,
+    });
+    res.json(result);
+  } catch (err) {
+    handleError(res, err, "Agent run failed");
+  }
+}
+
+export async function addFeedback(req, res) {
+  try {
+    const thread = await model.getThread(req.params.threadId, userId(req));
+    if (!thread) return res.status(404).json({ error: "Thread not found" });
+
+    const rating = req.body?.rating;
+    const comment = req.body?.comment?.trim() || null;
+    const messageId = req.body?.messageId || null;
+
+    if (rating !== 1 && rating !== -1 && !comment) {
+      return res.status(400).json({ error: "Provide rating (1 or -1) or comment" });
+    }
+
+    const feedback = await model.addFeedback({
+      threadId: req.params.threadId,
+      messageId,
+      rating: rating ?? null,
+      comment,
+      createdBy: userId(req),
+    });
+    res.status(201).json({ feedback });
+  } catch (err) {
+    handleError(res, err, "Failed to save feedback");
+  }
+}
+
+export async function getGuidelines(req, res) {
+  try {
+    const guidelines = await model.getGuidelines();
+    res.json({ guidelines });
+  } catch (err) {
+    handleError(res, err, "Failed to get guidelines");
+  }
+}
+
+export async function updateGuidelines(req, res) {
+  try {
+    const content = String(req.body?.content || "").trim();
+    if (!content) {
+      return res.status(400).json({ error: "content is required" });
+    }
+    const guidelines = await model.updateGuidelines(content, userId(req));
+    res.json({ guidelines });
+  } catch (err) {
+    handleError(res, err, "Failed to update guidelines");
+  }
+}

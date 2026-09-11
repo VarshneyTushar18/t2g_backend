@@ -1,27 +1,45 @@
 import multer from "multer";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./cloudinary.js";
+import path from "node:path";
 
 /* ===============================
    COMMON LIMIT
 ================================ */
 
-const FILE_LIMIT = 2 * 1024 * 1024; // 2MB
+const FILE_LIMIT = 2 * 1024 * 1024; // 2MB (testimonials, portfolio, case studies)
+
+/** Blog posts: large HTML content field + featured image. */
+export const BLOG_UPLOAD_LIMITS = {
+  fileSize: 10 * 1024 * 1024, // 10MB featured image
+  fieldSize: 50 * 1024 * 1024, // 50MB HTML / SEO JSON in multipart fields
+};
 
 /* ===============================
-   RESUME STORAGE (PDF / DOC)
+   RESUME STORAGE (PDF / DOC / JPG / PNG)
 ================================ */
+
+export const RESUME_FILE_LIMIT = 3 * 1024 * 1024; // 3MB (matches career form)
+
+const RESUME_SAFE_EXTS = [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"];
 
 const resumeStorage = new CloudinaryStorage({
   cloudinary,
-  params: async (req, file) => ({
-    folder: "tech2globe/resumes",
-    resource_type: "auto", // important for non-image files
-    public_id: Date.now() + "-" + file.originalname
-  .replace(/\.[^/.]+$/, "") // remove extension
-  .replace(/\s+/g, "_")
-  .replace(/[^\w.-]/g, "")
-  }),
+  params: async (req, file) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const base = path
+      .basename(file.originalname || "resume", ext)
+      .replace(/\s+/g, "_")
+      .replace(/[^\w.-]/g, "");
+    const safeExt = RESUME_SAFE_EXTS.includes(ext) ? ext : "";
+
+    return {
+      folder: "tech2globe/resumes",
+      // upload_stream stores PDFs/DOCs as image delivery; raw URLs 404.
+      resource_type: "auto",
+      public_id: `${Date.now()}-${base}${safeExt}`,
+    };
+  },
 });
 
 const resumeFilter = (req, file, cb) => {
@@ -29,19 +47,24 @@ const resumeFilter = (req, file, cb) => {
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/jpeg",
+    "image/png",
   ];
 
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error("Only PDF, DOC, and DOCX files are allowed"), false);
+    cb(
+      new Error("Only PDF, DOC, DOCX, JPG, and PNG files are allowed"),
+      false
+    );
   }
 };
 
 export const resumeUpload = multer({
   storage: resumeStorage,
   fileFilter: resumeFilter,
-  limits: { fileSize: FILE_LIMIT },
+  limits: { fileSize: RESUME_FILE_LIMIT },
 });
 
 /* ===============================
@@ -71,6 +94,26 @@ export const imageUpload = multer({
   storage: imageStorage,
   fileFilter: imageFilter,
   limits: { fileSize: FILE_LIMIT },
+});
+
+/* ===============================
+   LIFE GALLERY (BULK / FOLDER)
+================================ */
+
+/** Max gallery images per request (+1 slot for banner on create/update). */
+export const LIFE_GALLERY_MAX_FILES = 150;
+const LIFE_GALLERY_FILE_SIZE = 10 * 1024 * 1024; // 10MB per image (before compression)
+
+const lifeGalleryMemoryStorage = multer.memoryStorage();
+
+/** Life uploads: memory → compress (sharp) → Cloudinary in middleware. */
+export const lifeGalleryUpload = multer({
+  storage: lifeGalleryMemoryStorage,
+  fileFilter: imageFilter,
+  limits: {
+    fileSize: LIFE_GALLERY_FILE_SIZE,
+    files: LIFE_GALLERY_MAX_FILES + 1,
+  },
 });
 
 /* ===============================
@@ -109,4 +152,23 @@ export const caseStudiesUpload = multer({
   storage: caseStudiesStorage,
   fileFilter: imageFilter,
   limits: { fileSize: FILE_LIMIT },
+});
+
+/* ===============================
+   BLOG STORAGE
+================================ */
+
+const blogStorage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => ({
+    folder: "tech2globe/blog",
+    allowed_formats: ["jpg", "jpeg", "png", "webp"],
+    public_id: Date.now() + "-" + file.originalname.replace(/\s+/g, "_"),
+  }),
+});
+
+export const blogUpload = multer({
+  storage: blogStorage,
+  fileFilter: imageFilter,
+  limits: BLOG_UPLOAD_LIMITS,
 });

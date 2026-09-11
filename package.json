@@ -6,13 +6,30 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test:mail": "node src/utils/testingmail.js"
+    "migrate:blog": "node scripts/migrate-blog.mjs",
+    "set:blog-settings": "node scripts/set-blog-settings.mjs",
+    "copy:blog-db": "node scripts/copy-blog-to-separate-db.mjs",
+    "import:wp-blog": "node scripts/import-wp-blog.mjs",
+    "fix:blog-authors": "node scripts/fix-blog-authors-from-wp.mjs",
+    "report:legacy-blog-images": "node scripts/report-legacy-blog-images.mjs",
+    "migrate:blog-image-host": "node scripts/migrate-blog-image-host.mjs",
+    "migrate:blog-images-cloudinary": "node scripts/migrate-blog-images-cloudinary.mjs",
+    "fix:malformed-blog-images": "node scripts/fix-malformed-blog-image-urls.mjs",
+    "assign:default-blog-images": "node scripts/assign-default-blog-images.mjs",
+    "export:blog-seo": "node scripts/export-blog-seo-excel.mjs",
+    "import:docx-blogs": "node scripts/import-docx-blogs.mjs",
+    "test:mail": "node src/utils/testingmail.js",
+    "test:elevenlabs": "node scripts/test-elevenlabs-email.mjs",
+    "migrate:amazon-ads-leads": "node scripts/migrate-amazon-ads-lead-fields.mjs",
+    "verify:amazon-ads-leads": "node scripts/verify-amazon-ads-lead-fields.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@openai/agents": "^0.17.0",
+    "axios": "^1.17.0",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^1.41.3",
     "cookie-parser": "^1.4.7",
@@ -21,14 +38,20 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.3.1",
     "jsonwebtoken": "^9.0.3",
+    "mammoth": "^1.12.0",
     "multer": "^2.1.1",
     "multer-storage-cloudinary": "^4.0.0",
     "mysql2": "^3.19.1",
+    "node-cron": "^4.6.0",
     "nodemailer": "^8.0.2",
+    "openai": "^7.5.0",
+    "sharp": "^0.34.5",
     "sib-api-v3-sdk": "^8.5.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "xlsx": "^0.18.5"
   }
 }
