@@ -9,19 +9,27 @@ export const IMAGE_MODEL =
 
 async function openRouterHeaders() {
   const config = await getRuntimeConfig();
-  if (!config.apiKey) {
+  const imageKey = config.imageApiKey || config.apiKey;
+  if (!imageKey) {
     const err = new Error(
-      "Missing AI API key. Set it in Admin → Connect → AI Integrations.",
+      "Image API key missing. Go to Admin → Connect → AI Integrations and add an Image API key (or chat API key) plus an Image model that can generate images (e.g. google/gemini-2.5-flash-image-preview).",
+    );
+    err.status = 503;
+    throw err;
+  }
+  if (!config.imageModel) {
+    const err = new Error(
+      "Image model not set. Go to Admin → Connect → AI Integrations and set Image model (e.g. google/gemini-2.5-flash-image-preview). ChatGPT text models cannot generate images.",
     );
     err.status = 503;
     throw err;
   }
   return {
-    Authorization: `Bearer ${config.apiKey}`,
+    Authorization: `Bearer ${imageKey}`,
     "Content-Type": "application/json",
     "HTTP-Referer": config.siteUrl,
     "X-Title": config.siteName || "Tech2Globe Blog Image Agent",
-    __baseURL: config.baseURL,
+    __baseURL: config.imageBaseURL || config.baseURL,
     __imageModel: config.imageModel || IMAGE_MODEL,
   };
 }
@@ -169,6 +177,43 @@ export async function generateAndUploadBlogImage({ prompt, aspect = "16:9" }) {
     width: uploaded.width,
     height: uploaded.height,
     prompt: String(prompt || "").trim(),
-    model: IMAGE_MODEL,
+    model,
+  };
+}
+
+/** Status helpers for Image Agent UI alerts */
+export async function getImageGenerationStatus() {
+  const config = await getRuntimeConfig();
+  const cloudinary = isCloudinaryConfigured();
+  const hasKey = Boolean(config.imageApiKey || config.apiKey);
+  const hasModel = Boolean(config.imageModel);
+  const ready = hasKey && hasModel && cloudinary;
+
+  const alerts = [];
+  if (!hasModel) {
+    alerts.push(
+      "Set an Image model in Connect → AI Integrations (example: google/gemini-2.5-flash-image-preview). Text-only ChatGPT models cannot generate images.",
+    );
+  }
+  if (!hasKey) {
+    alerts.push(
+      "Add an Image API key (or Chat API key) in Connect → AI Integrations so image generation can call the provider.",
+    );
+  }
+  if (!cloudinary) {
+    alerts.push(
+      "Cloudinary is not configured on the server (CLOUDINARY_CLOUD_NAME / API_KEY / API_SECRET).",
+    );
+  }
+
+  return {
+    ready,
+    configured: ready,
+    hasImageApiKey: hasKey,
+    imageModel: config.imageModel || "",
+    imageBaseURL: config.imageBaseURL || config.baseURL || "",
+    imageKeySource: config.imageKeySource || "none",
+    cloudinary,
+    alerts,
   };
 }

@@ -140,15 +140,18 @@ function buildSystemContext({
 When the user wants a NEW blog and has NOT clearly confirmed writing yet:
 1. Do NOT call create_blog_post yet.
 2. Do NOT write the full blog body yet.
-3. Ask simple questions in plain English (max 4–5 bullets). Cover only missing items.
+3. Ask simple questions in plain English (max 6–7 bullets). Cover only missing items.
 4. Always try to learn:
    - Topic / what the blog is about
    - Who should read it (audience)
    - Draft or publish${canPublish ? "" : " (this user can only draft)"}
    - Author name (default: Tech2Globe Digital Team)
    - Optional: focus keyword / SEO phrase
-   - Optional: images — normal stock photos (default) or AI images
-5. After they answer (or if enough was already given), show a SHORT PLAN like:
+   - Optional: competitor or reference link(s) (URL of a competitor post, client page, or article to match / improve on)
+   - Optional: images — stock photos by default (for AI images use Image Agent separately)
+5. When asking, include a clear bullet like:
+   - Do you have a competitor or reference link I should follow or improve on?
+6. After they answer (or if enough was already given), show a SHORT PLAN like:
 
 Here is the plan:
 - Topic: ...
@@ -158,11 +161,12 @@ Here is the plan:
 - Author: ...
 - Status: draft|publish
 - SEO keyword: ... (or "I'll choose one")
+- Reference / competitor: ... (or "none")
 - Images: stock|AI|none
 
 Reply **yes** / **write it** to create the blog, or tell me what to change.
 
-6. Wait for confirmation before Stage B.
+7. Wait for confirmation before Stage B.
 
 ### Skip asking / write immediately ONLY when:
 - User says: "just write it", "write it now", "skip questions", "go ahead and create", "don't ask", OR
@@ -175,7 +179,8 @@ If skipping questions, still honor author/status/images from the message.
 ### Stage B — Write + save (only after confirm OR skip rules)
 1. Use the approved plan + conversation history.
 2. If they named an author, pass author_name exactly.
-3. Images:
+3. If they gave a competitor/reference URL, use it for angle, structure, and gaps to improve — do not copy text.
+4. Images:
    - AI images only if they asked ("generate images", "AI images", "generated cover") → generate_blog_image
    - Otherwise pick_blog_image (Unsplash)
 4. Write title + clean Markdown/HTML body + excerpt + slug + tags using ${human}% human / ${ai}% AI style.
