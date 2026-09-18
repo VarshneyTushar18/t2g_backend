@@ -11,7 +11,11 @@ if (!draftId) {
 async function main() {
   await ensureBlog20Ready();
   console.log(`[blog-2.0] Pushing draft #${draftId} to MailerLite…`);
+  console.log("[blog-2.0] This takes 2-5 minutes. Do not press Ctrl+C.");
   const result = await pushDraftToMailerLite(draftId);
+  if (!result?.ok) {
+    throw new Error("Push finished without ok:true result");
+  }
   console.log(JSON.stringify(result, null, 2));
 }
 

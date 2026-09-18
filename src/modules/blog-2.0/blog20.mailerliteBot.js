@@ -31,7 +31,7 @@ async function withBotLock(fn) {
   }
 }
 
-async function withBotTimeout(promise, label) {
+async function withBotTimeout(fn, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
@@ -43,7 +43,8 @@ async function withBotTimeout(promise, label) {
     }, BOT_TIMEOUT_MS);
   });
   try {
-    return await Promise.race([promise, timeout]);
+    const work = typeof fn === "function" ? fn() : fn;
+    return await Promise.race([work, timeout]);
   } finally {
     clearTimeout(timer);
   }
