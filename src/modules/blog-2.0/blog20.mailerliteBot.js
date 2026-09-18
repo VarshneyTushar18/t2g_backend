@@ -126,6 +126,31 @@ async function waitForEnabledSubmit(page) {
   throw err;
 }
 
+async function gotoPage(page, url, label) {
+  logStep(`Navigating: ${label}`);
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
+  await page.waitForLoadState("load", { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(1200);
+}
+
+async function ensureMailerLiteSession(page, creds) {
+  if (fs.existsSync(SESSION_FILE)) {
+    logStep("Trying saved MailerLite session");
+    await gotoPage(
+      page,
+      `https://dashboard.mailerlite.com/sites/${creds.siteId}/blog`,
+      "blog list (session)",
+    );
+    const onBlog =
+      page.url().includes("dashboard.mailerlite.com") && !page.url().includes("login");
+    if (onBlog) {
+      logStep("Saved session is valid");
+      return;
+    }
+  }
+  await loginIfNeeded(page, creds);
+}
+
 async function getBotCredentials() {
   const full = await settingsModel.getSettingsWithSecrets();
   const email = full.mailerlite_login_email;
@@ -149,10 +174,7 @@ async function loginIfNeeded(page, { email, password }) {
     if (onApp) return;
   }
 
-  await page.goto("https://accounts.mailerlite.com/login", {
-    waitUntil: "networkidle",
-    timeout: 60000,
-  });
+  await gotoPage(page, "https://accounts.mailerlite.com/login", "login page");
   await dismissOverlays(page);
 
   const emailInput = page
@@ -188,12 +210,12 @@ async function loginIfNeeded(page, { email, password }) {
 }
 
 async function openBlogList(page, siteId) {
-  await page.goto(`https://dashboard.mailerlite.com/sites/${siteId}/blog`, {
-    waitUntil: "networkidle",
-    timeout: 60000,
-  });
+  await gotoPage(
+    page,
+    `https://dashboard.mailerlite.com/sites/${siteId}/blog`,
+    "blog list",
+  );
   await dismissOverlays(page);
-  await page.waitForTimeout(1500);
 }
 
 async function findPostOnBlogList(page, title) {
@@ -391,8 +413,10 @@ export async function testMailerLiteBotLogin() {
         );
         context.setDefaultTimeout(60000);
         const page = await context.newPage();
-        await loginIfNeeded(page, creds);
-        await openBlogList(page, creds.siteId);
+        await ensureMailerLiteSession(page, creds);
+        if (!page.url().includes("/blog")) {
+          await openBlogList(page, creds.siteId);
+        }
         await captureDebug(page, "bot-test-ok");
         await context.storageState({ path: SESSION_FILE });
         return {
@@ -443,10 +467,12 @@ export async function pushDraftToMailerLite(draftId) {
         );
         context.setDefaultTimeout(60000);
         const page = await context.newPage();
-        logStep("Logging into MailerLite");
-        await loginIfNeeded(page, creds);
-        logStep("Opening MailerLite blog list");
-        await openBlogList(page, creds.siteId);
+        logStep("Ensuring MailerLite session");
+        await ensureMailerLiteSession(page, creds);
+        if (!page.url().includes("/blog")) {
+          logStep("Opening MailerLite blog list");
+          await openBlogList(page, creds.siteId);
+        }
         const result = await createBlogDraft(page, draft);
         logStep(`Push completed for draft #${draftId}`);
         await context.storageState({ path: SESSION_FILE });
@@ -471,4 +497,4 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-18-a";
+export const BOT_RUNTIME_VERSION = "2026-09-18-b";
