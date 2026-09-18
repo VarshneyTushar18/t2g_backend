@@ -140,7 +140,7 @@ async function waitForEnabledSubmit(page) {
     logStep("Trying Enter key on password field");
     await passInput.press("Enter");
     await page.waitForTimeout(3000);
-    if (!page.url().includes("login")) return;
+    return;
   }
 
   await captureDebug(page, "login-submit-disabled");
@@ -168,22 +168,55 @@ async function gotoPage(page, url, label) {
   await page.waitForTimeout(1200);
 }
 
+function isOnDashboard(page) {
+  const url = page.url();
+  return url.includes("dashboard.mailerlite.com") && !url.includes("login");
+}
+
+async function waitForDashboard(page, timeoutMs = 90000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (isOnDashboard(page)) {
+      logStep(`Dashboard ready (${page.url()})`);
+      return;
+    }
+    const url = page.url();
+    if (url.includes("accounts.mailerlite.com") && !url.includes("login")) {
+      logStep("On accounts portal — opening dashboard");
+      await gotoPage(page, "https://dashboard.mailerlite.com/", "dashboard");
+      continue;
+    }
+    if (url.includes("login")) break;
+    await page.waitForTimeout(1500);
+  }
+
+  await captureDebug(page, "dashboard-not-reached");
+  const err = new Error(
+    `MailerLite login did not reach dashboard (stuck at ${page.url()}). Re-save bot password and disable 2FA.`,
+  );
+  err.status = 401;
+  throw err;
+}
+
 async function ensureMailerLiteSession(page, creds) {
   if (fs.existsSync(SESSION_FILE)) {
     logStep("Trying saved MailerLite session");
     await gotoPage(
       page,
       `https://dashboard.mailerlite.com/sites/${creds.siteId}/blog/posts`,
-      "blog list (session)",
+      "blog (session)",
     );
-    const onBlog =
-      page.url().includes("dashboard.mailerlite.com") && !page.url().includes("login");
-    if (onBlog) {
+    if (
+      isOnDashboard(page) &&
+      (await findCreatePostButton(page, { timeout: 10000, click: false }))
+    ) {
       logStep("Saved session is valid");
       return;
     }
+    logStep("Saved session expired — logging in again");
   }
   await loginIfNeeded(page, creds);
+  await waitForDashboard(page);
 }
 
 async function getBotCredentials() {
@@ -248,17 +281,7 @@ async function loginIfNeeded(page, { email, password }) {
     await waitForEnabledSubmit(page);
   }
 
-  await page.waitForURL(/dashboard\.mailerlite\.com/i, { timeout: 90000 }).catch(() => {});
-  await page.waitForTimeout(2000);
-
-  if (page.url().includes("login") || page.url().includes("accounts.mailerlite.com/login")) {
-    const err = new Error(
-      "MailerLite login failed. Check bot email/password. Disable 2FA on the bot account or complete login manually once.",
-    );
-    err.status = 401;
-    await captureDebug(page, "login-failed");
-    throw err;
-  }
+  await waitForDashboard(page);
 
   ensureDirs();
   await page.context().storageState({ path: SESSION_FILE });
@@ -315,10 +338,23 @@ async function ensureBlogPostsPage(page, siteId) {
     }
   }
 
-  logStep(`Blog posts UI not found yet (${page.url()})`);
+  await captureDebug(page, "blog-posts-page-missing");
+  const err = new Error(
+    `Could not open MailerLite blog posts page (current URL: ${page.url()}). Confirm site ID ${siteId} and bot account access.`,
+  );
+  err.status = 500;
+  throw err;
 }
 
 async function openBlogList(page, siteId) {
+  if (
+    isOnDashboard(page) &&
+    page.url().includes("/blog") &&
+    (await findCreatePostButton(page, { timeout: 5000, click: false }))
+  ) {
+    logStep("Already on MailerLite blog posts page");
+    return;
+  }
   await ensureBlogPostsPage(page, siteId);
 }
 
@@ -603,4 +639,4 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-18-e";
+export const BOT_RUNTIME_VERSION = "2026-09-18-f";
