@@ -134,18 +134,31 @@ async function typeIntoInput(page, locator, value) {
 async function typeLikeHuman(page, locator, text) {
   await locator.waitFor({ state: "visible", timeout: 30000 });
   await locator.click();
-  await locator.fill("");
-  await page.keyboard.type(text, { delay: 65 });
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type(text, { delay: 55 });
   await locator.dispatchEvent("input");
   await locator.dispatchEvent("change");
   await locator.blur();
 }
 
 async function submitLoginForm(page) {
+  const emailInput = page
+    .locator('input[type="email"], input[data-test-id="email-input"]')
+    .first();
+  const passInput = page.locator('input[type="password"]').first();
   const submit = page
     .locator('#login-submit-button, [data-test-id="signin-button"], button[type="submit"]')
     .first();
   await submit.waitFor({ state: "visible", timeout: 30000 });
+
+  await passInput.click().catch(() => {});
+  await page.waitForTimeout(300);
+  await emailInput.click().catch(() => {});
+  await page.waitForTimeout(300);
+  await passInput.click().catch(() => {});
+  await page.keyboard.press("Tab");
+  await page.waitForTimeout(800);
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
     if (await submit.isEnabled().catch(() => false)) {
@@ -156,19 +169,32 @@ async function submitLoginForm(page) {
     await page.waitForTimeout(500);
   }
 
+  const emailVal = await emailInput.inputValue().catch(() => "");
+  const passLen = (await passInput.inputValue().catch(() => "")).length;
+
+  if (emailVal.length > 3 && passLen > 3) {
+    logStep("Login button still disabled — trying programmatic submit");
+    const clicked = await page
+      .evaluate(() => {
+        const btn = document.querySelector(
+          '#login-submit-button, [data-test-id="signin-button"], button[type="submit"]',
+        );
+        if (!btn) return false;
+        btn.removeAttribute("disabled");
+        btn.disabled = false;
+        btn.click();
+        return true;
+      })
+      .catch(() => false);
+    if (clicked) {
+      await page.waitForTimeout(3000);
+      return;
+    }
+  }
+
   await captureDebug(page, "login-submit-disabled");
-  const emailLen = await page
-    .locator('input[type="email"], input[data-test-id="email-input"]')
-    .first()
-    .inputValue()
-    .catch(() => "");
-  const passLen = await page
-    .locator('input[type="password"]')
-    .first()
-    .inputValue()
-    .catch(() => "");
   const err = new Error(
-    `MailerLite login button stayed disabled (email chars: ${emailLen.length}, password chars: ${passLen.length}). Re-save bot email + password in Blog-2.0 → MailerLite. Use a real MailerLite login — 2FA off.`,
+    `MailerLite login button stayed disabled (email chars: ${emailVal.length}, password chars: ${passLen}). Headless login may be blocked — run: xvfb-run -a npm run blog20:save-session`,
   );
   err.status = 400;
   throw err;
@@ -660,4 +686,4 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-18-g";
+export const BOT_RUNTIME_VERSION = "2026-09-18-h";
