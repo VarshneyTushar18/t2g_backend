@@ -30,7 +30,7 @@ export async function createThread({
 
 export async function getThread(threadId, userId) {
   const [rows] = await blogDb.query(
-    `SELECT id, user_id, user_email, title, created_at, updated_at
+    `SELECT id, user_id, user_email, title, agent_type, created_at, updated_at
      FROM blog_agent_threads
      WHERE id = ? AND user_id = ?`,
     [threadId, String(userId)],
