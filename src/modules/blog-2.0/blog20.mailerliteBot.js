@@ -11,6 +11,10 @@ const BOT_TIMEOUT_MS = Number(process.env.BLOG_20_BOT_TIMEOUT_MS) || 5 * 60 * 10
 
 let botBusy = false;
 
+function logStep(message) {
+  console.log(`[blog-2.0-bot] ${message}`);
+}
+
 async function withBotLock(fn) {
   if (botBusy) {
     const err = new Error(
@@ -105,28 +109,20 @@ async function waitForEnabledSubmit(page) {
     .first();
   await submit.waitFor({ state: "visible", timeout: 30000 });
 
-  const enabled = await page
-    .waitForFunction(
-      () => {
-        const btn = document.querySelector(
-          '#login-submit-button, [data-test-id="signin-button"], button[type="submit"]',
-        );
-        return Boolean(btn && !btn.disabled);
-      },
-      { timeout: 20000 },
-    )
-    .catch(() => null);
-
-  if (!enabled) {
-    await captureDebug(page, "login-submit-disabled");
-    const err = new Error(
-      "MailerLite login button stayed disabled. Re-save bot email and password in Blog-2.0 → MailerLite (valid MailerLite account, 2FA off).",
-    );
-    err.status = 400;
-    throw err;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (await submit.isEnabled().catch(() => false)) {
+      await submit.click({ timeout: 5000 });
+      return;
+    }
+    await page.waitForTimeout(500);
   }
 
-  return submit;
+  await captureDebug(page, "login-submit-disabled");
+  const err = new Error(
+    "MailerLite login button stayed disabled. Re-save bot email and password in Blog-2.0 → MailerLite (valid MailerLite account, 2FA off).",
+  );
+  err.status = 400;
+  throw err;
 }
 
 async function getBotCredentials() {
@@ -172,8 +168,7 @@ async function loginIfNeeded(page, { email, password }) {
   await typeIntoInput(passInput, password);
   await page.waitForTimeout(400);
 
-  const submit = await waitForEnabledSubmit(page);
-  await submit.click();
+  await waitForEnabledSubmit(page);
 
   await page.waitForURL(/dashboard\.mailerlite\.com/i, { timeout: 90000 }).catch(() => {});
   await page.waitForTimeout(2000);
@@ -217,25 +212,44 @@ async function findPostOnBlogList(page, title) {
 
 async function clickEnabledButton(page, labels) {
   for (const label of labels) {
-    const btn = page.getByRole("button", { name: label }).first();
-    if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await btn.waitFor({ state: "visible", timeout: 10000 });
-      await page.waitForTimeout(300);
-      if (await btn.isEnabled().catch(() => false)) {
-        await btn.click();
-        return true;
-      }
-    }
     const loose = page.locator(`button:not([disabled]):has-text("${label}")`).first();
-    if (await loose.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await loose.click();
+    if (await loose.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await loose.click({ timeout: 10000 });
       return true;
     }
   }
   return false;
 }
 
+async function clickDialogCreate(page) {
+  const clicked = await page
+    .evaluate(() => {
+      const buttons = [...document.querySelectorAll("button")];
+      const btn = buttons.find((el) => {
+        const text = (el.textContent || "").trim();
+        return /^create$/i.test(text) && !/create a post/i.test(text) && !el.disabled;
+      });
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })
+    .catch(() => false);
+
+  if (clicked) return true;
+
+  const titleInput = page
+    .locator('[role="dialog"] input[type="text"], input[placeholder*="title" i]')
+    .first();
+  if (await titleInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await titleInput.press("Enter");
+    await page.waitForTimeout(1500);
+    return !(await titleInput.isVisible().catch(() => false));
+  }
+  return false;
+}
+
 async function createBlogDraft(page, draft) {
+  logStep(`Creating MailerLite post: ${draft.title.slice(0, 80)}`);
   await dismissOverlays(page);
 
   const createBtn = page
@@ -253,39 +267,18 @@ async function createBlogDraft(page, draft) {
     )
     .first();
   await typeIntoInput(titleInput, draft.title);
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(800);
 
-  const createdDialog = await page
-    .waitForFunction(
-      () => {
-        const buttons = [...document.querySelectorAll("button")];
-        return buttons.some((btn) => {
-          const text = (btn.textContent || "").trim();
-          return (
-            /^create$/i.test(text) &&
-            !/create a post/i.test(text) &&
-            !btn.disabled
-          );
-        });
-      },
-      { timeout: 20000 },
-    )
-    .catch(() => null);
-
-  if (!createdDialog) {
+  logStep("Confirming new post title in MailerLite dialog");
+  const created = await clickDialogCreate(page);
+  if (!created) {
     await captureDebug(page, "create-title-stuck");
     const err = new Error(
-      "MailerLite did not enable the Create button after entering the post title.",
+      "MailerLite did not accept the post title (Create button stayed disabled).",
     );
     err.status = 500;
     throw err;
   }
-
-  const confirmCreate = page
-    .locator('button:not([disabled]):has-text("Create")')
-    .filter({ hasNotText: "Create a post" })
-    .last();
-  await confirmCreate.click();
   await page.waitForTimeout(3000);
 
   const excerptArea = page
@@ -336,11 +329,12 @@ async function createBlogDraft(page, draft) {
 
   await page.waitForTimeout(1200);
 
+  logStep("Saving post as draft in MailerLite editor");
   let saved = await clickEnabledButton(page, ["Save as draft", "Save draft"]);
   if (!saved) {
-    const saveMenu = page.locator('button:has-text("Save")').first();
-    if (await saveMenu.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await saveMenu.click();
+    saved = await clickEnabledButton(page, ["Save"]);
+    if (saved) {
+      await page.waitForTimeout(500);
       saved = await clickEnabledButton(page, ["Save as draft", "Save draft"]);
     }
   }
@@ -415,6 +409,7 @@ export async function testMailerLiteBotLogin() {
 export async function pushDraftToMailerLite(draftId) {
   return withBotLock(() =>
     withBotTimeout(async () => {
+      logStep(`Push started for draft #${draftId}`);
       const draft = await draftsModel.getDraftById(draftId);
       if (!draft) {
         const err = new Error(`Draft ${draftId} not found`);
@@ -447,9 +442,12 @@ export async function pushDraftToMailerLite(draftId) {
         );
         context.setDefaultTimeout(60000);
         const page = await context.newPage();
+        logStep("Logging into MailerLite");
         await loginIfNeeded(page, creds);
+        logStep("Opening MailerLite blog list");
         await openBlogList(page, creds.siteId);
         const result = await createBlogDraft(page, draft);
+        logStep(`Push completed for draft #${draftId}`);
         await context.storageState({ path: SESSION_FILE });
 
         await draftsModel.updateDraftPushStatus(draftId, {

@@ -88,7 +88,12 @@ export async function pushDraftToMailerLiteSite(req, res) {
     const result = await pushDraftToMailerLite(Number(req.params.id));
     res.json({ success: true, ...result });
   } catch (err) {
-    console.error("[blog-2.0] bot push failed:", err);
+    console.error("[blog-2.0] bot push failed:", err.message || err);
+    if (err.message?.includes("disabled") || err.name === "TimeoutError") {
+      console.error(
+        "[blog-2.0] Hint: check uploads/blog20-bot-debug/ and pm2 logs for [blog-2.0-bot] steps",
+      );
+    }
     res.status(err.status || 500).json({
       message: err.message || "MailerLite bot push failed",
     });
