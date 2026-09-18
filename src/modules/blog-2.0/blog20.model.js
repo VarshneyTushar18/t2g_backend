@@ -49,6 +49,22 @@ function makeHint(apiKey) {
   return `${key.slice(0, 4)}…${key.slice(-4)}`;
 }
 
+function makeEmailHint(email) {
+  const value = String(email || "").trim();
+  const at = value.indexOf("@");
+  if (at < 1) return value ? "••••" : null;
+  const local = value.slice(0, at);
+  const domain = value.slice(at);
+  if (local.length <= 2) return `••${domain}`;
+  return `${local.slice(0, 2)}•••${domain}`;
+}
+
+function isValidLoginEmail(email) {
+  const value = String(email || "").trim();
+  if (!value || value.includes("://") || value.includes("/")) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 function mapRow(row) {
   if (!row) return { ...DEFAULTS, has_mailerlite_api_key: false, mailerlite_api_key_hint: null };
   return {
@@ -73,6 +89,7 @@ function mapRow(row) {
     mailerlite_bot_enabled: Boolean(row.mailerlite_bot_enabled),
     mailerlite_bot_auto_push: Boolean(row.mailerlite_bot_auto_push),
     has_mailerlite_login: Boolean(row.mailerlite_login_email_enc && row.mailerlite_login_password_enc),
+    mailerlite_login_email_hint: null,
     approval_emails: parseJsonArray(row.approval_emails, []),
     teams_webhook_url: row.teams_webhook_url || "",
     notes: row.notes || "",
@@ -177,7 +194,18 @@ export async function getSettings() {
   const [rows] = await blogDb.query(
     "SELECT * FROM blog_2_0_settings WHERE id = 1 LIMIT 1",
   );
-  return mapRow(rows[0]);
+  const row = rows[0];
+  const settings = mapRow(row);
+  if (row?.mailerlite_login_email_enc) {
+    try {
+      settings.mailerlite_login_email_hint = makeEmailHint(
+        decryptSecret(row.mailerlite_login_email_enc),
+      );
+    } catch {
+      settings.mailerlite_login_email_hint = "••••";
+    }
+  }
+  return settings;
 }
 
 export function getMailerLiteApiKey(row) {
@@ -229,7 +257,16 @@ export async function upsertSettings(payload, updatedBy = null) {
   let mailerlite_login_password_enc = current.mailerlite_login_password_enc || null;
   const loginEmail = String(payload.mailerlite_login_email || "").trim();
   const loginPassword = String(payload.mailerlite_login_password || "").trim();
-  if (loginEmail) mailerlite_login_email_enc = encryptSecret(loginEmail);
+  if (loginEmail) {
+    if (!isValidLoginEmail(loginEmail)) {
+      const err = new Error(
+        "Bot login email must be a valid MailerLite account email (not a website URL).",
+      );
+      err.status = 400;
+      throw err;
+    }
+    mailerlite_login_email_enc = encryptSecret(loginEmail);
+  }
   if (loginPassword) mailerlite_login_password_enc = encryptSecret(loginPassword);
   if (payload.clear_mailerlite_login === true) {
     mailerlite_login_email_enc = null;
