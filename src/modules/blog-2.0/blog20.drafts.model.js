@@ -22,12 +22,38 @@ export async function ensureBlog20DraftsTable() {
       author_name VARCHAR(255) NULL DEFAULT 'Bright CRM Team',
       created_by VARCHAR(255) NULL,
       thread_id VARCHAR(36) NULL,
+      mailerlite_push_status ENUM('idle','processing','pushed','failed') NOT NULL DEFAULT 'idle',
+      mailerlite_pushed_at TIMESTAMP NULL,
+      mailerlite_push_error TEXT NULL,
       created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_blog20_drafts_status (status),
-      KEY idx_blog20_drafts_slug (slug)
+      KEY idx_blog20_drafts_slug (slug),
+      KEY idx_blog20_drafts_ml_push (mailerlite_push_status)
     )
   `);
+  const alters = [
+    {
+      col: "mailerlite_push_status",
+      sql: "ALTER TABLE blog_2_0_drafts ADD COLUMN mailerlite_push_status ENUM('idle','processing','pushed','failed') NOT NULL DEFAULT 'idle' AFTER thread_id",
+    },
+    {
+      col: "mailerlite_pushed_at",
+      sql: "ALTER TABLE blog_2_0_drafts ADD COLUMN mailerlite_pushed_at TIMESTAMP NULL AFTER mailerlite_push_status",
+    },
+    {
+      col: "mailerlite_push_error",
+      sql: "ALTER TABLE blog_2_0_drafts ADD COLUMN mailerlite_push_error TEXT NULL AFTER mailerlite_pushed_at",
+    },
+  ];
+  const [cols] = await blogDb.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'blog_2_0_drafts'`,
+  );
+  const existing = new Set(cols.map((c) => c.COLUMN_NAME));
+  for (const { col, sql } of alters) {
+    if (!existing.has(col)) await blogDb.query(sql);
+  }
 }
 
 function mapDraft(row) {
@@ -42,10 +68,35 @@ function mapDraft(row) {
     focus_keyword: row.focus_keyword || null,
     status: row.status,
     author_name: row.author_name || "Bright CRM Team",
+    mailerlite_push_status: row.mailerlite_push_status || "idle",
+    mailerlite_pushed_at: row.mailerlite_pushed_at || null,
+    mailerlite_push_error: row.mailerlite_push_error || null,
     client_blog_url: null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+export async function updateDraftPushStatus(id, patch) {
+  const sets = ["updated_at = CURRENT_TIMESTAMP"];
+  const vals = [];
+  if (patch.mailerlite_push_status !== undefined) {
+    sets.push("mailerlite_push_status = ?");
+    vals.push(patch.mailerlite_push_status);
+  }
+  if (patch.mailerlite_pushed_at !== undefined) {
+    sets.push("mailerlite_pushed_at = ?");
+    vals.push(patch.mailerlite_pushed_at);
+  }
+  if (patch.mailerlite_push_error !== undefined) {
+    sets.push("mailerlite_push_error = ?");
+    vals.push(patch.mailerlite_push_error);
+  }
+  vals.push(id);
+  await blogDb.query(
+    `UPDATE blog_2_0_drafts SET ${sets.join(", ")} WHERE id = ?`,
+    vals,
+  );
 }
 
 export async function createDraft(data) {
@@ -87,7 +138,9 @@ export async function getDraftById(id) {
 
 export async function listDrafts({ limit = 20 } = {}) {
   const [rows] = await blogDb.query(
-    `SELECT id, title, slug, excerpt, status, featured_image, author_name, created_at, updated_at
+    `SELECT id, title, slug, excerpt, status, featured_image, author_name,
+            mailerlite_push_status, mailerlite_pushed_at, mailerlite_push_error,
+            created_at, updated_at
      FROM blog_2_0_drafts
      ORDER BY created_at DESC
      LIMIT ?`,

@@ -37,10 +37,30 @@ Isolated admin module for Sahil sir's project. Does **not** replace the main Tec
 | 9 | Newsletter: full HTML vs excerpt+link | Client decision | Blog-2.0 → MailerLite |
 | 10 | Schedule: weekly/monthly, day, time | Client decision | Automations (Phase 3) |
 
+## MailerLite browser bot (website blog)
+
+MailerLite has no blog API. The bot uses **Playwright** to log in and create drafts.
+
+**Server setup (once):**
+```bash
+cd t2g_backend
+npm install
+npm run playwright:install
+```
+
+**Admin:** Blog-2.0 → MailerLite → Browser bot:
+- Dedicated MailerLite login (2FA off)
+- Site ID: `196949098888169226`
+- Enable bot + optional auto-push
+- **Test bot login** → then **Blog-2.0 → Drafts → Push to MailerLite**
+
+Debug screenshots on failure: `uploads/blog20-bot-debug/`
+
 ## Deploy
 
 1. Pull backend + admin panel
-2. Restart backend → log should show `[blog-2.0] settings table ready`
+2. Run `npm install` and `npm run playwright:install` on server
+3. Restart backend → log should show `[blog-2.0] settings + drafts tables ready`
 3. Assign Blog-2.0 module to Sahil's user
 4. Open Blog-2.0 → MailerLite → paste token → **Test connection** → **Save**
 

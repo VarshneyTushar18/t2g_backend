@@ -1,5 +1,10 @@
 import * as model from "./blog20.model.js";
+import * as draftsModel from "./blog20.drafts.model.js";
 import { testMailerLiteConnection } from "./blog20.mailerlite.js";
+import {
+  testMailerLiteBotLogin,
+  pushDraftToMailerLite,
+} from "./blog20.mailerliteBot.js";
 import { getPublicApiBase } from "../agents/automations/blogApproval.email.js";
 
 export async function getOverview(req, res) {
@@ -56,6 +61,49 @@ export async function testMailerLite(req, res) {
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message || "MailerLite test failed" });
+  }
+}
+
+export async function listDrafts(req, res) {
+  try {
+    const drafts = await draftsModel.listDrafts({ limit: 50 });
+    res.json({ success: true, drafts });
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Failed to list drafts" });
+  }
+}
+
+export async function getDraft(req, res) {
+  try {
+    const draft = await draftsModel.getDraftById(req.params.id);
+    if (!draft) return res.status(404).json({ message: "Draft not found" });
+    res.json({ success: true, draft });
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Failed to load draft" });
+  }
+}
+
+export async function pushDraftToMailerLiteSite(req, res) {
+  try {
+    const result = await pushDraftToMailerLite(Number(req.params.id));
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[blog-2.0] bot push failed:", err);
+    res.status(err.status || 500).json({
+      message: err.message || "MailerLite bot push failed",
+    });
+  }
+}
+
+export async function testMailerLiteBot(req, res) {
+  try {
+    const result = await testMailerLiteBotLogin();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[blog-2.0] bot test failed:", err);
+    res.status(err.status || 500).json({
+      message: err.message || "MailerLite bot test failed",
+    });
   }
 }
 

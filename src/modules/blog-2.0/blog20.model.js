@@ -16,6 +16,10 @@ const DEFAULTS = {
   mailerlite_from_email: "",
   mailerlite_from_name: "Bright CRM",
   mailerlite_group_id: "",
+  mailerlite_site_id: "196949098888169226",
+  mailerlite_bot_enabled: false,
+  mailerlite_bot_auto_push: false,
+  has_mailerlite_login: false,
   approval_emails: [],
   teams_webhook_url: "",
   timezone: "Asia/Kolkata",
@@ -65,6 +69,10 @@ function mapRow(row) {
     mailerlite_from_email: row.mailerlite_from_email || "",
     mailerlite_from_name: row.mailerlite_from_name || "",
     mailerlite_group_id: row.mailerlite_group_id || "",
+    mailerlite_site_id: row.mailerlite_site_id || DEFAULTS.mailerlite_site_id,
+    mailerlite_bot_enabled: Boolean(row.mailerlite_bot_enabled),
+    mailerlite_bot_auto_push: Boolean(row.mailerlite_bot_auto_push),
+    has_mailerlite_login: Boolean(row.mailerlite_login_email_enc && row.mailerlite_login_password_enc),
     approval_emails: parseJsonArray(row.approval_emails, []),
     teams_webhook_url: row.teams_webhook_url || "",
     notes: row.notes || "",
@@ -123,6 +131,26 @@ export async function ensureBlog20Tables() {
       col: "newsletter_send_time",
       sql: "ALTER TABLE blog_2_0_settings ADD COLUMN newsletter_send_time VARCHAR(8) NOT NULL DEFAULT '12:00' AFTER newsletter_send_timing",
     },
+    {
+      col: "mailerlite_site_id",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_site_id VARCHAR(64) NULL DEFAULT '196949098888169226' AFTER mailerlite_group_id",
+    },
+    {
+      col: "mailerlite_bot_enabled",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_bot_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER mailerlite_site_id",
+    },
+    {
+      col: "mailerlite_bot_auto_push",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_bot_auto_push TINYINT(1) NOT NULL DEFAULT 0 AFTER mailerlite_bot_enabled",
+    },
+    {
+      col: "mailerlite_login_email_enc",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_login_email_enc TEXT NULL AFTER mailerlite_bot_auto_push",
+    },
+    {
+      col: "mailerlite_login_password_enc",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_login_password_enc TEXT NULL AFTER mailerlite_login_email_enc",
+    },
   ];
   const [cols] = await blogDb.query(
     `SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -168,8 +196,16 @@ export async function getSettingsWithSecret() {
   return {
     ...mapRow(row),
     mailerlite_api_key: getMailerLiteApiKey(row),
+    mailerlite_login_email: row?.mailerlite_login_email_enc
+      ? decryptSecret(row.mailerlite_login_email_enc)
+      : process.env.BLOG_20_MAILERLITE_LOGIN_EMAIL || null,
+    mailerlite_login_password: row?.mailerlite_login_password_enc
+      ? decryptSecret(row.mailerlite_login_password_enc)
+      : process.env.BLOG_20_MAILERLITE_LOGIN_PASSWORD || null,
   };
 }
+
+export const getSettingsWithSecrets = getSettingsWithSecret;
 
 export async function upsertSettings(payload, updatedBy = null) {
   const [rows] = await blogDb.query(
@@ -187,6 +223,17 @@ export async function upsertSettings(payload, updatedBy = null) {
   if (payload.clear_mailerlite_api_key === true) {
     mailerlite_api_key_enc = null;
     mailerlite_api_key_hint = null;
+  }
+
+  let mailerlite_login_email_enc = current.mailerlite_login_email_enc || null;
+  let mailerlite_login_password_enc = current.mailerlite_login_password_enc || null;
+  const loginEmail = String(payload.mailerlite_login_email || "").trim();
+  const loginPassword = String(payload.mailerlite_login_password || "").trim();
+  if (loginEmail) mailerlite_login_email_enc = encryptSecret(loginEmail);
+  if (loginPassword) mailerlite_login_password_enc = encryptSecret(loginPassword);
+  if (payload.clear_mailerlite_login === true) {
+    mailerlite_login_email_enc = null;
+    mailerlite_login_password_enc = null;
   }
 
   const approvalEmails =
@@ -215,10 +262,12 @@ export async function upsertSettings(payload, updatedBy = null) {
       (id, project_name, client_site_url, client_blog_url, website_mode, newsletter_mode,
        mailerlite_enabled, mailerlite_api_key_enc, mailerlite_api_key_hint,
        mailerlite_from_email, mailerlite_from_name, mailerlite_group_id,
+       mailerlite_site_id, mailerlite_bot_enabled, mailerlite_bot_auto_push,
+       mailerlite_login_email_enc, mailerlite_login_password_enc,
        approval_emails, teams_webhook_url, timezone, automation_frequency,
        automation_run_days, automation_run_time, newsletter_send_timing, newsletter_send_time,
        notes, updated_by)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
       project_name = VALUES(project_name),
       client_site_url = VALUES(client_site_url),
@@ -231,6 +280,11 @@ export async function upsertSettings(payload, updatedBy = null) {
       mailerlite_from_email = VALUES(mailerlite_from_email),
       mailerlite_from_name = VALUES(mailerlite_from_name),
       mailerlite_group_id = VALUES(mailerlite_group_id),
+      mailerlite_site_id = VALUES(mailerlite_site_id),
+      mailerlite_bot_enabled = VALUES(mailerlite_bot_enabled),
+      mailerlite_bot_auto_push = VALUES(mailerlite_bot_auto_push),
+      mailerlite_login_email_enc = VALUES(mailerlite_login_email_enc),
+      mailerlite_login_password_enc = VALUES(mailerlite_login_password_enc),
       approval_emails = VALUES(approval_emails),
       teams_webhook_url = VALUES(teams_webhook_url),
       timezone = VALUES(timezone),
@@ -256,6 +310,15 @@ export async function upsertSettings(payload, updatedBy = null) {
       payload.mailerlite_from_email ?? current.mailerlite_from_email ?? null,
       payload.mailerlite_from_name ?? current.mailerlite_from_name ?? null,
       payload.mailerlite_group_id ?? current.mailerlite_group_id ?? null,
+      payload.mailerlite_site_id ?? current.mailerlite_site_id ?? DEFAULTS.mailerlite_site_id,
+      payload.mailerlite_bot_enabled !== undefined
+        ? payload.mailerlite_bot_enabled ? 1 : 0
+        : current.mailerlite_bot_enabled || 0,
+      payload.mailerlite_bot_auto_push !== undefined
+        ? payload.mailerlite_bot_auto_push ? 1 : 0
+        : current.mailerlite_bot_auto_push || 0,
+      mailerlite_login_email_enc,
+      mailerlite_login_password_enc,
       approvalEmails,
       payload.teams_webhook_url ?? current.teams_webhook_url ?? null,
       payload.timezone || current.timezone || DEFAULTS.timezone,

@@ -2,6 +2,7 @@ import { tool } from "@openai/agents";
 import { z } from "zod";
 import * as draftsModel from "./blog20.drafts.model.js";
 import * as settingsModel from "./blog20.model.js";
+import { pushDraftToMailerLite } from "./blog20.mailerliteBot.js";
 
 export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 }) {
   const createBrightCrmBlogDraft = tool({
@@ -34,6 +35,14 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
         thread_id: threadId,
       });
       const blogBase = settings.client_blog_url || settings.client_site_url || "";
+      let botPush = null;
+      if (settings.mailerlite_bot_enabled && settings.mailerlite_bot_auto_push) {
+        try {
+          botPush = await pushDraftToMailerLite(draft.id);
+        } catch (err) {
+          botPush = { ok: false, error: err.message };
+        }
+      }
       return {
         ok: true,
         id: draft.id,
@@ -49,7 +58,8 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
         suggested_url_after_manual_publish: blogBase
           ? `${blogBase.replace(/\/$/, "")}/${draft.slug}`
           : null,
-        on_mailerlite_site: false,
+        on_mailerlite_site: Boolean(botPush?.ok),
+        mailerlite_bot: botPush,
         featured_image: draft.featured_image,
         humanize_percent: humanizePercent,
       };

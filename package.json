@@ -21,7 +21,9 @@
     "test:mail": "node src/utils/testingmail.js",
     "test:elevenlabs": "node scripts/test-elevenlabs-email.mjs",
     "migrate:amazon-ads-leads": "node scripts/migrate-amazon-ads-lead-fields.mjs",
-    "verify:amazon-ads-leads": "node scripts/verify-amazon-ads-lead-fields.mjs"
+    "verify:amazon-ads-leads": "node scripts/verify-amazon-ads-lead-fields.mjs",
+    "playwright:install": "playwright install chromium",
+    "test:blog20-bot": "node scripts/test-blog20-bot.mjs"
   },
   "keywords": [],
   "author": "",
@@ -45,6 +47,7 @@
     "node-cron": "^4.6.0",
     "nodemailer": "^8.0.2",
     "openai": "^7.5.0",
+    "playwright": "^1.55.0",
     "sharp": "^0.34.5",
     "sib-api-v3-sdk": "^8.5.0",
     "uuid": "^13.0.0",
