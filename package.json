@@ -24,7 +24,8 @@
     "verify:amazon-ads-leads": "node scripts/verify-amazon-ads-lead-fields.mjs",
     "playwright:install": "playwright install chromium",
     "test:blog20-bot": "node scripts/test-blog20-bot.mjs",
-    "test:blog20-push": "node scripts/test-blog20-push.mjs"
+    "test:blog20-push": "node scripts/test-blog20-push.mjs",
+    "blog20:save-session": "node scripts/blog20-bot-save-session.mjs"
   },
   "keywords": [],
   "author": "",

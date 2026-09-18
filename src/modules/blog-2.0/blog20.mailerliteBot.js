@@ -63,6 +63,16 @@ async function launchBrowser() {
   });
 }
 
+function newBotContext(browser) {
+  const useSession = fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {};
+  return browser.newContext({
+    ...useSession,
+    viewport: { width: 1366, height: 900 },
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  });
+}
+
 function ensureDirs() {
   for (const dir of [SESSION_DIR, DEBUG_DIR]) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -121,26 +131,29 @@ async function typeIntoInput(page, locator, value) {
   }
 }
 
-async function waitForEnabledSubmit(page) {
+async function typeLikeHuman(page, locator, text) {
+  await locator.waitFor({ state: "visible", timeout: 30000 });
+  await locator.click();
+  await locator.fill("");
+  await page.keyboard.type(text, { delay: 65 });
+  await locator.dispatchEvent("input");
+  await locator.dispatchEvent("change");
+  await locator.blur();
+}
+
+async function submitLoginForm(page) {
   const submit = page
     .locator('#login-submit-button, [data-test-id="signin-button"], button[type="submit"]')
     .first();
   await submit.waitFor({ state: "visible", timeout: 30000 });
 
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
     if (await submit.isEnabled().catch(() => false)) {
-      await submit.click({ timeout: 5000 });
+      logStep("Clicking MailerLite Log in button");
+      await submit.click({ timeout: 10000 });
       return;
     }
     await page.waitForTimeout(500);
-  }
-
-  const passInput = page.locator('input[type="password"]').first();
-  if (await passInput.isVisible().catch(() => false)) {
-    logStep("Trying Enter key on password field");
-    await passInput.press("Enter");
-    await page.waitForTimeout(3000);
-    return;
   }
 
   await captureDebug(page, "login-submit-disabled");
@@ -161,6 +174,22 @@ async function waitForEnabledSubmit(page) {
   throw err;
 }
 
+async function tryOpenDashboardFromAccounts(page) {
+  const clicked = await page
+    .evaluate(() => {
+      const links = [...document.querySelectorAll('a[href*="dashboard.mailerlite.com"]')];
+      const preferred =
+        links.find((a) => /dashboard|open app|go to/i.test(a.textContent || "")) || links[0];
+      if (!preferred) return false;
+      preferred.click();
+      return true;
+    })
+    .catch(() => false);
+  if (!clicked) return false;
+  await page.waitForTimeout(3000);
+  return isOnDashboard(page);
+}
+
 async function gotoPage(page, url, label) {
   logStep(`Navigating: ${label}`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
@@ -174,6 +203,7 @@ function isOnDashboard(page) {
 }
 
 async function waitForDashboard(page, timeoutMs = 90000) {
+  let portalAttempts = 0;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (isOnDashboard(page)) {
@@ -182,7 +212,10 @@ async function waitForDashboard(page, timeoutMs = 90000) {
     }
     const url = page.url();
     if (url.includes("accounts.mailerlite.com") && !url.includes("login")) {
-      logStep("On accounts portal — opening dashboard");
+      portalAttempts += 1;
+      if (portalAttempts > 2) break;
+      logStep("On accounts portal — trying to open dashboard");
+      if (await tryOpenDashboardFromAccounts(page)) continue;
       await gotoPage(page, "https://dashboard.mailerlite.com/", "dashboard");
       continue;
     }
@@ -192,7 +225,7 @@ async function waitForDashboard(page, timeoutMs = 90000) {
 
   await captureDebug(page, "dashboard-not-reached");
   const err = new Error(
-    `MailerLite login did not reach dashboard (stuck at ${page.url()}). Re-save bot password and disable 2FA.`,
+    `MailerLite login did not reach dashboard (stuck at ${page.url()}). Wrong password, 2FA enabled, or captcha blocked headless login. Re-save bot credentials in admin or complete one manual login on the server.`,
   );
   err.status = 401;
   throw err;
@@ -266,21 +299,13 @@ async function loginIfNeeded(page, { email, password }) {
     .first();
 
   logStep(`Filling MailerLite login for *@${email.split("@")[1] || "unknown"}`);
-  await fillReactInput(page, emailInput, email);
-  await page.waitForTimeout(600);
+  await typeLikeHuman(page, emailInput, email);
+  await page.waitForTimeout(700);
   await passInput.click();
-  await fillReactInput(page, passInput, password);
-  await page.waitForTimeout(800);
-
-  const submit = page
-    .locator('#login-submit-button, [data-test-id="signin-button"], button[type="submit"]')
-    .first();
-  if (await submit.isEnabled().catch(() => false)) {
-    await submit.click();
-  } else {
-    await waitForEnabledSubmit(page);
-  }
-
+  await typeLikeHuman(page, passInput, password);
+  await page.waitForTimeout(1000);
+  await submitLoginForm(page);
+  await page.waitForTimeout(3000);
   await waitForDashboard(page);
 
   ensureDirs();
@@ -550,9 +575,7 @@ export async function testMailerLiteBotLogin() {
       ensureDirs();
       const browser = await launchBrowser();
       try {
-        const context = await browser.newContext(
-          fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {},
-        );
+        const context = await newBotContext(browser);
         context.setDefaultTimeout(60000);
         const page = await context.newPage();
         await ensureMailerLiteSession(page, creds);
@@ -604,9 +627,7 @@ export async function pushDraftToMailerLite(draftId) {
       const browser = await launchBrowser();
 
       try {
-        const context = await browser.newContext(
-          fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {},
-        );
+        const context = await newBotContext(browser);
         context.setDefaultTimeout(60000);
         const page = await context.newPage();
         logStep("Ensuring MailerLite session");
@@ -639,4 +660,4 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-18-f";
+export const BOT_RUNTIME_VERSION = "2026-09-18-g";
