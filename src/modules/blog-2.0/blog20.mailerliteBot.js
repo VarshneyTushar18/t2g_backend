@@ -94,14 +94,38 @@ async function dismissOverlays(page) {
   }
 }
 
-async function typeIntoInput(locator, value) {
+async function fillReactInput(page, locator, value) {
   await locator.waitFor({ state: "visible", timeout: 30000 });
   await locator.click();
-  await locator.fill("");
-  await locator.pressSequentially(value, { delay: 35 });
-  await locator.dispatchEvent("input");
-  await locator.dispatchEvent("change");
+  const handle = await locator.elementHandle();
+  if (!handle) {
+    const err = new Error("MailerLite form input not found");
+    err.status = 500;
+    throw err;
+  }
+  await page.evaluate((el, text) => {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    if (setter) setter.call(el, text);
+    else el.value = text;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, handle, value);
+  await handle.dispose();
   await locator.blur();
+}
+
+async function typeIntoInput(page, locator, value) {
+  await fillReactInput(page, locator, value);
+  const current = await locator.inputValue().catch(() => "");
+  if (current !== value) {
+    await locator.click();
+    await locator.pressSequentially(value, { delay: 40 });
+    await locator.dispatchEvent("input");
+    await locator.dispatchEvent("change");
+  }
 }
 
 async function waitForEnabledSubmit(page) {
@@ -118,9 +142,27 @@ async function waitForEnabledSubmit(page) {
     await page.waitForTimeout(500);
   }
 
+  const passInput = page.locator('input[type="password"]').first();
+  if (await passInput.isVisible().catch(() => false)) {
+    logStep("Trying Enter key on password field");
+    await passInput.press("Enter");
+    await page.waitForTimeout(3000);
+    if (!page.url().includes("login")) return;
+  }
+
   await captureDebug(page, "login-submit-disabled");
+  const emailLen = await page
+    .locator('input[type="email"], input[data-test-id="email-input"]')
+    .first()
+    .inputValue()
+    .catch(() => "");
+  const passLen = await page
+    .locator('input[type="password"]')
+    .first()
+    .inputValue()
+    .catch(() => "");
   const err = new Error(
-    "MailerLite login button stayed disabled. Re-save bot email and password in Blog-2.0 → MailerLite (valid MailerLite account, 2FA off).",
+    `MailerLite login button stayed disabled (email chars: ${emailLen.length}, password chars: ${passLen.length}). Re-save bot email + password in Blog-2.0 → MailerLite. Use a real MailerLite login — 2FA off.`,
   );
   err.status = 400;
   throw err;
@@ -163,6 +205,13 @@ async function getBotCredentials() {
     err.status = 400;
     throw err;
   }
+  if (email.includes("://") || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const err = new Error(
+      "Bot login email in settings is invalid (must be a MailerLite account email, not a URL). Re-save in Blog-2.0 → MailerLite.",
+    );
+    err.status = 400;
+    throw err;
+  }
   return { email, password, siteId };
 }
 
@@ -172,6 +221,10 @@ async function loginIfNeeded(page, { email, password }) {
     const onApp =
       url.includes("dashboard.mailerlite.com") && !url.includes("login");
     if (onApp) return;
+  }
+
+  if (fs.existsSync(SESSION_FILE)) {
+    fs.unlinkSync(SESSION_FILE);
   }
 
   await gotoPage(page, "https://accounts.mailerlite.com/login", "login page");
@@ -186,12 +239,21 @@ async function loginIfNeeded(page, { email, password }) {
     .locator('input[data-test-id="password-input"], input[type="password"]')
     .first();
 
-  await typeIntoInput(emailInput, email);
-  await page.waitForTimeout(400);
-  await typeIntoInput(passInput, password);
-  await page.waitForTimeout(400);
+  logStep(`Filling MailerLite login for *@${email.split("@")[1] || "unknown"}`);
+  await fillReactInput(page, emailInput, email);
+  await page.waitForTimeout(600);
+  await passInput.click();
+  await fillReactInput(page, passInput, password);
+  await page.waitForTimeout(800);
 
-  await waitForEnabledSubmit(page);
+  const submit = page
+    .locator('#login-submit-button, [data-test-id="signin-button"], button[type="submit"]')
+    .first();
+  if (await submit.isEnabled().catch(() => false)) {
+    await submit.click();
+  } else {
+    await waitForEnabledSubmit(page);
+  }
 
   await page.waitForURL(/dashboard\.mailerlite\.com/i, { timeout: 90000 }).catch(() => {});
   await page.waitForTimeout(2000);
@@ -289,7 +351,7 @@ async function createBlogDraft(page, draft) {
       '[role="dialog"] input[type="text"], input[placeholder*="post title" i], input[placeholder*="title" i]',
     )
     .first();
-  await typeIntoInput(titleInput, draft.title);
+  await typeIntoInput(page, titleInput, draft.title);
   await page.waitForTimeout(800);
 
   logStep("Confirming new post title in MailerLite dialog");
@@ -310,7 +372,7 @@ async function createBlogDraft(page, draft) {
     )
     .first();
   if (await excerptArea.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await typeIntoInput(excerptArea, draft.excerpt || draft.title.slice(0, 160));
+    await typeIntoInput(page, excerptArea, draft.excerpt || draft.title.slice(0, 160));
   }
 
   const openedEditor = await clickEnabledButton(page, [
@@ -497,4 +559,4 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-18-b";
+export const BOT_RUNTIME_VERSION = "2026-09-18-c";
