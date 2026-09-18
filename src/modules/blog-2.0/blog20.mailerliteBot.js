@@ -260,6 +260,7 @@ async function createBlogDraft(page, draft) {
 
   await page.waitForTimeout(1000);
 
+  let saved = false;
   const saveDraft = page
     .locator(
       'button:has-text("Save as draft"), button:has-text("Save draft"), [data-testid*="draft"]',
@@ -267,28 +268,56 @@ async function createBlogDraft(page, draft) {
     .first();
   if (await saveDraft.isVisible().catch(() => false)) {
     await saveDraft.click();
+    saved = true;
   } else {
     const saveMenu = page.locator('button:has-text("Save")').first();
-    await saveMenu.click();
-    const draftOpt = page.locator('text=Save as draft').first();
-    if (await draftOpt.isVisible().catch(() => false)) {
-      await draftOpt.click();
+    if (await saveMenu.isVisible().catch(() => false)) {
+      await saveMenu.click();
+      const draftOpt = page.locator('text=Save as draft').first();
+      if (await draftOpt.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await draftOpt.click();
+        saved = true;
+      }
     }
   }
 
-  await page.waitForTimeout(2000);
+  if (!saved) {
+    await captureDebug(page, "save-draft-missing");
+    const err = new Error(
+      "Could not find Save as draft in MailerLite editor. UI may have changed — check uploads/blog20-bot-debug/.",
+    );
+    err.status = 500;
+    throw err;
+  }
+
+  await page.waitForTimeout(3000);
 
   const settings = await settingsModel.getSettings();
+  const siteId = settings.mailerlite_site_id || "196949098888169226";
   const blogBase =
     settings.client_blog_url ||
-    `https://dashboard.mailerlite.com/sites/${settings.mailerlite_site_id || "196949098888169226"}/blog`;
+    `https://dashboard.mailerlite.com/sites/${siteId}/blog`;
+
+  await openBlogList(page, siteId);
+  const titleOnList = page.getByText(draft.title, { exact: false }).first();
+  const foundOnList = await titleOnList.isVisible({ timeout: 10000 }).catch(() => false);
+  if (!foundOnList) {
+    await captureDebug(page, "post-not-on-list");
+    const err = new Error(
+      `Post saved but title "${draft.title}" not found on MailerLite blog list. Check filter is "All posts" or Drafts.`,
+    );
+    err.status = 500;
+    throw err;
+  }
+
+  await captureDebug(page, "push-ok");
 
   return {
     ok: true,
     title: draft.title,
     slug: draft.slug,
     mailerlite_dashboard_url: blogBase,
-    note: "Draft created via browser bot. Verify in MailerLite Sites → Blog.",
+    note: "Draft created via browser bot. It appears in MailerLite Posts (may be unpublished/draft).",
   };
 }
 
