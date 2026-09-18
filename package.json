@@ -23,7 +23,8 @@
     "migrate:amazon-ads-leads": "node scripts/migrate-amazon-ads-lead-fields.mjs",
     "verify:amazon-ads-leads": "node scripts/verify-amazon-ads-lead-fields.mjs",
     "playwright:install": "playwright install chromium",
-    "test:blog20-bot": "node scripts/test-blog20-bot.mjs"
+    "test:blog20-bot": "node scripts/test-blog20-bot.mjs",
+    "test:blog20-push": "node scripts/test-blog20-push.mjs"
   },
   "keywords": [],
   "author": "",

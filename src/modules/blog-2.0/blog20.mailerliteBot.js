@@ -7,7 +7,7 @@ import * as draftsModel from "./blog20.drafts.model.js";
 const SESSION_DIR = path.join(process.cwd(), "storage", "blog-2.0");
 const SESSION_FILE = path.join(SESSION_DIR, "mailerlite-session.json");
 const DEBUG_DIR = path.join(process.cwd(), "uploads", "blog20-bot-debug");
-const BOT_TIMEOUT_MS = Number(process.env.BLOG_20_BOT_TIMEOUT_MS) || 3 * 60 * 1000;
+const BOT_TIMEOUT_MS = Number(process.env.BLOG_20_BOT_TIMEOUT_MS) || 5 * 60 * 1000;
 
 let botBusy = false;
 
@@ -193,104 +193,168 @@ async function loginIfNeeded(page, { email, password }) {
 
 async function openBlogList(page, siteId) {
   await page.goto(`https://dashboard.mailerlite.com/sites/${siteId}/blog`, {
-    waitUntil: "domcontentloaded",
+    waitUntil: "networkidle",
     timeout: 60000,
   });
+  await dismissOverlays(page);
   await page.waitForTimeout(1500);
 }
 
+async function findPostOnBlogList(page, title) {
+  const snippet = String(title || "").trim().slice(0, 48);
+  if (!snippet) return false;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const match = page.getByText(snippet, { exact: false }).first();
+    if (await match.isVisible({ timeout: 2500 }).catch(() => false)) {
+      return true;
+    }
+    await page.mouse.wheel(0, 700);
+    await page.waitForTimeout(600);
+  }
+  return false;
+}
+
+async function clickEnabledButton(page, labels) {
+  for (const label of labels) {
+    const btn = page.getByRole("button", { name: label }).first();
+    if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await btn.waitFor({ state: "visible", timeout: 10000 });
+      await page.waitForTimeout(300);
+      if (await btn.isEnabled().catch(() => false)) {
+        await btn.click();
+        return true;
+      }
+    }
+    const loose = page.locator(`button:not([disabled]):has-text("${label}")`).first();
+    if (await loose.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await loose.click();
+      return true;
+    }
+  }
+  return false;
+}
+
 async function createBlogDraft(page, draft) {
+  await dismissOverlays(page);
+
   const createBtn = page
-    .locator('button:has-text("Create a post"), a:has-text("Create a post")')
+    .getByRole("button", { name: /create a post/i })
+    .or(page.getByRole("link", { name: /create a post/i }))
+    .or(page.locator('button:has-text("Create a post"), a:has-text("Create a post")'))
     .first();
   await createBtn.waitFor({ state: "visible", timeout: 30000 });
   await createBtn.click();
+  await page.waitForTimeout(1200);
 
   const titleInput = page
     .locator(
-      'input[placeholder*="post title" i], input[placeholder*="Enter post title" i], dialog input[type="text"]',
+      '[role="dialog"] input[type="text"], input[placeholder*="post title" i], input[placeholder*="title" i]',
     )
     .first();
-  await titleInput.waitFor({ state: "visible", timeout: 15000 });
-  await titleInput.fill(draft.title);
+  await typeIntoInput(titleInput, draft.title);
+  await page.waitForTimeout(600);
+
+  const createdDialog = await page
+    .waitForFunction(
+      () => {
+        const buttons = [...document.querySelectorAll("button")];
+        return buttons.some((btn) => {
+          const text = (btn.textContent || "").trim();
+          return (
+            /^create$/i.test(text) &&
+            !/create a post/i.test(text) &&
+            !btn.disabled
+          );
+        });
+      },
+      { timeout: 20000 },
+    )
+    .catch(() => null);
+
+  if (!createdDialog) {
+    await captureDebug(page, "create-title-stuck");
+    const err = new Error(
+      "MailerLite did not enable the Create button after entering the post title.",
+    );
+    err.status = 500;
+    throw err;
+  }
 
   const confirmCreate = page
-    .locator('button:has-text("Create"):not(:has-text("Create a post"))')
+    .locator('button:not([disabled]):has-text("Create")')
+    .filter({ hasNotText: "Create a post" })
     .last();
   await confirmCreate.click();
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(3000);
 
   const excerptArea = page
     .locator(
-      'textarea[name*="excerpt" i], textarea[placeholder*="excerpt" i], label:has-text("Excerpt") + textarea, textarea',
+      'textarea[name*="excerpt" i], textarea[placeholder*="excerpt" i], label:has-text("Excerpt") + textarea',
     )
     .first();
-  if (await excerptArea.isVisible().catch(() => false)) {
-    await excerptArea.fill(draft.excerpt || draft.title.slice(0, 160));
+  if (await excerptArea.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await typeIntoInput(excerptArea, draft.excerpt || draft.title.slice(0, 160));
   }
 
-  const saveEdit = page
-    .locator(
-      'button:has-text("Save and edit content"), button:has-text("Save & edit content"), a:has-text("Save and edit content")',
-    )
-    .first();
-  await saveEdit.waitFor({ state: "visible", timeout: 30000 });
-  await saveEdit.click();
-  await page.waitForTimeout(3000);
+  const openedEditor = await clickEnabledButton(page, [
+    "Save and edit content",
+    "Save & edit content",
+  ]);
+  if (!openedEditor) {
+    await captureDebug(page, "save-edit-missing");
+    const err = new Error(
+      'Could not find "Save and edit content" on MailerLite post setup page.',
+    );
+    err.status = 500;
+    throw err;
+  }
+  await page.waitForTimeout(4000);
 
   const html = String(draft.content || "").trim();
-  const editable = page.locator('[contenteditable="true"]').first();
+  const plainBody = html.replace(/<h1[^>]*>.*?<\/h1>/i, "").trim();
   const codeBtn = page.locator('button:has-text("HTML"), button:has-text("Code")').first();
-
-  if (await codeBtn.isVisible().catch(() => false)) {
+  if (await codeBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
     await codeBtn.click();
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(800);
   }
 
-  if (await editable.isVisible().catch(() => false)) {
+  const editable = page.locator('[contenteditable="true"]').first();
+  const bodyTextarea = page.locator("textarea").first();
+  if (await editable.isVisible({ timeout: 5000 }).catch(() => false)) {
     await editable.click();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-    await page.keyboard.insertText(html.replace(/<h1[^>]*>.*?<\/h1>/i, "").trim());
+    await page.keyboard.insertText(plainBody);
+  } else if (await bodyTextarea.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await bodyTextarea.fill(plainBody);
   } else {
-    const bodyTextarea = page.locator("textarea").first();
-    if (await bodyTextarea.isVisible().catch(() => false)) {
-      await bodyTextarea.fill(html);
-    }
+    await captureDebug(page, "editor-missing");
+    const err = new Error("MailerLite content editor not found after opening post.");
+    err.status = 500;
+    throw err;
   }
 
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1200);
 
-  let saved = false;
-  const saveDraft = page
-    .locator(
-      'button:has-text("Save as draft"), button:has-text("Save draft"), [data-testid*="draft"]',
-    )
-    .first();
-  if (await saveDraft.isVisible().catch(() => false)) {
-    await saveDraft.click();
-    saved = true;
-  } else {
+  let saved = await clickEnabledButton(page, ["Save as draft", "Save draft"]);
+  if (!saved) {
     const saveMenu = page.locator('button:has-text("Save")').first();
-    if (await saveMenu.isVisible().catch(() => false)) {
+    if (await saveMenu.isVisible({ timeout: 3000 }).catch(() => false)) {
       await saveMenu.click();
-      const draftOpt = page.locator('text=Save as draft').first();
-      if (await draftOpt.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await draftOpt.click();
-        saved = true;
-      }
+      saved = await clickEnabledButton(page, ["Save as draft", "Save draft"]);
     }
   }
 
   if (!saved) {
     await captureDebug(page, "save-draft-missing");
     const err = new Error(
-      "Could not find Save as draft in MailerLite editor. UI may have changed — check uploads/blog20-bot-debug/.",
+      "Could not find Save as draft in MailerLite editor. Check uploads/blog20-bot-debug/.",
     );
     err.status = 500;
     throw err;
   }
 
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(4000);
 
   const settings = await settingsModel.getSettings();
   const siteId = settings.mailerlite_site_id || "196949098888169226";
@@ -299,12 +363,11 @@ async function createBlogDraft(page, draft) {
     `https://dashboard.mailerlite.com/sites/${siteId}/blog`;
 
   await openBlogList(page, siteId);
-  const titleOnList = page.getByText(draft.title, { exact: false }).first();
-  const foundOnList = await titleOnList.isVisible({ timeout: 10000 }).catch(() => false);
+  const foundOnList = await findPostOnBlogList(page, draft.title);
   if (!foundOnList) {
     await captureDebug(page, "post-not-on-list");
     const err = new Error(
-      `Post saved but title "${draft.title}" not found on MailerLite blog list. Check filter is "All posts" or Drafts.`,
+      `Post may be saved but "${draft.title.slice(0, 60)}" was not found on the MailerLite blog list. Try filter "Drafts" or "All posts".`,
     );
     err.status = 500;
     throw err;
@@ -317,7 +380,7 @@ async function createBlogDraft(page, draft) {
     title: draft.title,
     slug: draft.slug,
     mailerlite_dashboard_url: blogBase,
-    note: "Draft created via browser bot. It appears in MailerLite Posts (may be unpublished/draft).",
+    note: `Draft "${draft.title}" created on MailerLite. It may show as unpublished/draft in Posts.`,
   };
 }
 
