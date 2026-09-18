@@ -380,7 +380,7 @@ async function createBlogDraft(page, draft) {
 }
 
 export async function testMailerLiteBotLogin() {
-  return withBotLock(() =>
+  return withBotLock(async () =>
     withBotTimeout(async () => {
       const creds = await getBotCredentials();
       ensureDirs();
@@ -408,7 +408,7 @@ export async function testMailerLiteBotLogin() {
 }
 
 export async function pushDraftToMailerLite(draftId) {
-  return withBotLock(() =>
+  return withBotLock(async () =>
     withBotTimeout(async () => {
       logStep(`Push started for draft #${draftId}`);
       const draft = await draftsModel.getDraftById(draftId);
@@ -470,3 +470,5 @@ export async function pushDraftToMailerLite(draftId) {
     }, `push draft ${draftId}`),
   );
 }
+
+export const BOT_RUNTIME_VERSION = "2026-09-18-a";
