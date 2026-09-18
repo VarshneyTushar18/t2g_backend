@@ -173,7 +173,7 @@ async function ensureMailerLiteSession(page, creds) {
     logStep("Trying saved MailerLite session");
     await gotoPage(
       page,
-      `https://dashboard.mailerlite.com/sites/${creds.siteId}/blog`,
+      `https://dashboard.mailerlite.com/sites/${creds.siteId}/blog/posts`,
       "blog list (session)",
     );
     const onBlog =
@@ -264,13 +264,62 @@ async function loginIfNeeded(page, { email, password }) {
   await page.context().storageState({ path: SESSION_FILE });
 }
 
-async function openBlogList(page, siteId) {
-  await gotoPage(
-    page,
+async function findCreatePostButton(page, { timeout = 60000, click = true } = {}) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const candidates = [
+      page.getByRole("button", { name: /create a post/i }),
+      page.getByRole("link", { name: /create a post/i }),
+      page.locator('button:has-text("Create a post")'),
+      page.locator('a:has-text("Create a post")'),
+      page.locator('button:has-text("Create post")'),
+      page.locator('[data-test-id*="create-post"], [data-test-id*="create_post"]'),
+    ];
+    for (const candidate of candidates) {
+      const btn = candidate.first();
+      if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
+        if (click) await btn.click({ timeout: 10000 });
+        return btn;
+      }
+    }
+    await page.waitForTimeout(1000);
+  }
+  return null;
+}
+
+async function ensureBlogPostsPage(page, siteId) {
+  const urls = [
+    `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`,
     `https://dashboard.mailerlite.com/sites/${siteId}/blog`,
-    "blog list",
-  );
-  await dismissOverlays(page);
+  ];
+
+  for (const url of urls) {
+    await gotoPage(page, url, "blog posts");
+    await dismissOverlays(page);
+
+    const blogTab = page
+      .locator(
+        'a[href*="/blog"]:has-text("Blog"), [role="tab"]:has-text("Blog"), nav a:has-text("Blog")',
+      )
+      .first();
+    if (await blogTab.isVisible({ timeout: 3000 }).catch(() => false)) {
+      logStep("Opening Blog tab");
+      await blogTab.click().catch(() => {});
+      await page.waitForTimeout(2500);
+    }
+
+    const createBtn = await findCreatePostButton(page, { timeout: 12000, click: false });
+    if (createBtn) {
+      logStep(`Blog posts page ready (${page.url()})`);
+      return;
+    }
+  }
+
+  logStep(`Blog posts UI not found yet (${page.url()})`);
+}
+
+async function openBlogList(page, siteId) {
+  await ensureBlogPostsPage(page, siteId);
 }
 
 async function findPostOnBlogList(page, title) {
@@ -330,13 +379,15 @@ async function createBlogDraft(page, draft) {
   logStep(`Creating MailerLite post: ${draft.title.slice(0, 80)}`);
   await dismissOverlays(page);
 
-  const createBtn = page
-    .getByRole("button", { name: /create a post/i })
-    .or(page.getByRole("link", { name: /create a post/i }))
-    .or(page.locator('button:has-text("Create a post"), a:has-text("Create a post")'))
-    .first();
-  await createBtn.waitFor({ state: "visible", timeout: 30000 });
-  await createBtn.click();
+  const createBtn = await findCreatePostButton(page, { timeout: 60000, click: true });
+  if (!createBtn) {
+    await captureDebug(page, "create-post-button-missing");
+    const err = new Error(
+      `Create a post button not found on MailerLite blog page (${page.url()}). Check uploads/blog20-bot-debug/.`,
+    );
+    err.status = 500;
+    throw err;
+  }
   await page.waitForTimeout(1200);
 
   const titleInput = page
@@ -552,4 +603,4 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-18-d";
+export const BOT_RUNTIME_VERSION = "2026-09-18-e";
