@@ -77,7 +77,10 @@ function buildSystemContext({ guidelines, settings }) {
 - Client site: ${settings.client_site_url || "Bright CRM MailerLite site"}
 - Client blog: ${settings.client_blog_url || settings.client_site_url || ""}
 - Save posts ONLY with create_bright_crm_blog_draft
-- After save, tell user: draft is ready to paste into MailerLite blog editor
+- After save, tell user: draft is in Blog-2.0 database ONLY — NOT on MailerLite website yet
+- NEVER say the post is live or viewable on MailerLite unless a human pasted it there
+- NEVER use "view draft here" with a MailerLite preview URL — that URL does not exist until manual publish
+- Give clear steps: MailerLite dashboard → Sites → Blog → Create a post → paste → Save as draft
 - Ask-first workflow: topic, audience, author, SEO keyword, competitor/reference link, images
 - Wait for confirm before writing unless user says "just write it"
 

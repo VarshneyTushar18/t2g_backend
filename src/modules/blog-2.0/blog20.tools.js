@@ -44,8 +44,12 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
         client_site: settings.client_site_url,
         client_blog: blogBase,
         mailerlite_note:
-          "Draft saved for Bright CRM only. Open MailerLite website blog editor and paste title, excerpt, content, and featured image.",
-        url: blogBase ? `${blogBase.replace(/\/$/, "")}/${draft.slug}` : null,
+          "Draft saved in Blog-2.0 only — NOT on MailerLite yet. Human must open MailerLite → Sites → Blog → Create a post and paste title, excerpt, content, featured image, then Save as draft.",
+        suggested_slug: draft.slug,
+        suggested_url_after_manual_publish: blogBase
+          ? `${blogBase.replace(/\/$/, "")}/${draft.slug}`
+          : null,
+        on_mailerlite_site: false,
         featured_image: draft.featured_image,
         humanize_percent: humanizePercent,
       };
