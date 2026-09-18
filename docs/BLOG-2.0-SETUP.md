@@ -41,6 +41,28 @@ Isolated admin module for Sahil sir's project. Does **not** replace the main Tec
 
 MailerLite has no blog API. The bot uses **Playwright** to log in and create drafts.
 
+### Server safety (production)
+
+| Concern | Reality |
+|---------|---------|
+| Other PM2 apps (`t2g_ai_backend`, `tech2globeca`, etc.) | **Not affected** — bot runs only inside `t2g_backend` when you click Test / Push |
+| `dnf install` libraries | **Safe** — passive `.so` files (GTK/accessibility). No new services, no port changes, no nginx/mysql changes |
+| Chromium always running? | **No** — starts on demand, closes in `finally` after each job (max ~3 min timeout) |
+| Multiple bots at once? | **Blocked** — second request gets “bot already running” |
+| Auto-push | **Off by default** — enable only when you trust login + push flow |
+
+**Recommended:** keep **auto-push disabled** until manual Test + Push works. Use **manual Push** from Drafts during testing.
+
+**RHEL/CentOS/AlmaLinux** (no `apt-get`):
+```bash
+cd t2g_backend
+npx playwright install chromium
+dnf install -y at-spi2-atk atk cups-libs libdrm libxkbcommon \
+  libXcomposite libXdamage libXfixes libXrandr mesa-libgbm \
+  pango cairo alsa-lib nss nspr libxshmfence
+pm2 restart t2g_backend
+```
+
 **Server setup (once):**
 ```bash
 cd t2g_backend

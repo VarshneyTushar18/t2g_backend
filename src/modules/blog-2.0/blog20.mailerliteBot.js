@@ -7,6 +7,56 @@ import * as draftsModel from "./blog20.drafts.model.js";
 const SESSION_DIR = path.join(process.cwd(), "storage", "blog-2.0");
 const SESSION_FILE = path.join(SESSION_DIR, "mailerlite-session.json");
 const DEBUG_DIR = path.join(process.cwd(), "uploads", "blog20-bot-debug");
+const BOT_TIMEOUT_MS = Number(process.env.BLOG_20_BOT_TIMEOUT_MS) || 3 * 60 * 1000;
+
+let botBusy = false;
+
+async function withBotLock(fn) {
+  if (botBusy) {
+    const err = new Error(
+      "MailerLite bot is already running. Wait for it to finish before starting another job.",
+    );
+    err.status = 409;
+    throw err;
+  }
+  botBusy = true;
+  try {
+    return await fn();
+  } finally {
+    botBusy = false;
+  }
+}
+
+async function withBotTimeout(promise, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(
+        `MailerLite bot timed out after ${Math.round(BOT_TIMEOUT_MS / 1000)}s (${label}).`,
+      );
+      err.status = 504;
+      reject(err);
+    }, BOT_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function launchBrowser() {
+  return chromium.launch({
+    headless: true,
+    timeout: 30000,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
+  });
+}
 
 function ensureDirs() {
   for (const dir of [SESSION_DIR, DEBUG_DIR]) {
@@ -27,6 +77,56 @@ async function captureDebug(page, label) {
   } catch {
     return null;
   }
+}
+
+async function dismissOverlays(page) {
+  for (const label of ["Accept all", "Accept", "Allow all", "Got it", "I agree"]) {
+    const btn = page.locator(`button:has-text("${label}")`).first();
+    if (await btn.isVisible({ timeout: 400 }).catch(() => false)) {
+      await btn.click().catch(() => {});
+      await page.waitForTimeout(300);
+    }
+  }
+}
+
+async function typeIntoInput(locator, value) {
+  await locator.waitFor({ state: "visible", timeout: 30000 });
+  await locator.click();
+  await locator.fill("");
+  await locator.pressSequentially(value, { delay: 35 });
+  await locator.dispatchEvent("input");
+  await locator.dispatchEvent("change");
+  await locator.blur();
+}
+
+async function waitForEnabledSubmit(page) {
+  const submit = page
+    .locator('#login-submit-button, [data-test-id="signin-button"], button[type="submit"]')
+    .first();
+  await submit.waitFor({ state: "visible", timeout: 30000 });
+
+  const enabled = await page
+    .waitForFunction(
+      () => {
+        const btn = document.querySelector(
+          '#login-submit-button, [data-test-id="signin-button"], button[type="submit"]',
+        );
+        return Boolean(btn && !btn.disabled);
+      },
+      { timeout: 20000 },
+    )
+    .catch(() => null);
+
+  if (!enabled) {
+    await captureDebug(page, "login-submit-disabled");
+    const err = new Error(
+      "MailerLite login button stayed disabled. Re-save bot email and password in Blog-2.0 → MailerLite (valid MailerLite account, 2FA off).",
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  return submit;
 }
 
 async function getBotCredentials() {
@@ -53,23 +153,26 @@ async function loginIfNeeded(page, { email, password }) {
   }
 
   await page.goto("https://accounts.mailerlite.com/login", {
-    waitUntil: "domcontentloaded",
+    waitUntil: "networkidle",
     timeout: 60000,
   });
+  await dismissOverlays(page);
 
   const emailInput = page
-    .locator('input[type="email"], input[name="email"], input[autocomplete="email"]')
-    .first();
-  const passInput = page.locator('input[type="password"]').first();
-  await emailInput.waitFor({ state: "visible", timeout: 30000 });
-  await emailInput.fill(email);
-  await passInput.fill(password);
-
-  const submit = page
     .locator(
-      'button[type="submit"], button:has-text("Log in"), button:has-text("Sign in")',
+      'input[data-test-id="email-input"], input[type="email"], input[name="email"], input[autocomplete="email"]',
     )
     .first();
+  const passInput = page
+    .locator('input[data-test-id="password-input"], input[type="password"]')
+    .first();
+
+  await typeIntoInput(emailInput, email);
+  await page.waitForTimeout(400);
+  await typeIntoInput(passInput, password);
+  await page.waitForTimeout(400);
+
+  const submit = await waitForEnabledSubmit(page);
   await submit.click();
 
   await page.waitForURL(/dashboard\.mailerlite\.com/i, { timeout: 90000 }).catch(() => {});
@@ -190,83 +293,89 @@ async function createBlogDraft(page, draft) {
 }
 
 export async function testMailerLiteBotLogin() {
-  const creds = await getBotCredentials();
-  ensureDirs();
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
-  try {
-    const context = await browser.newContext(
-      fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {},
-    );
-    const page = await context.newPage();
-    await loginIfNeeded(page, creds);
-    await openBlogList(page, creds.siteId);
-    await captureDebug(page, "bot-test-ok");
-    await context.storageState({ path: SESSION_FILE });
-    return {
-      ok: true,
-      message: "Bot logged in and opened MailerLite blog list.",
-      url: page.url(),
-    };
-  } finally {
-    await browser.close();
-  }
+  return withBotLock(() =>
+    withBotTimeout(async () => {
+      const creds = await getBotCredentials();
+      ensureDirs();
+      const browser = await launchBrowser();
+      try {
+        const context = await browser.newContext(
+          fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {},
+        );
+        context.setDefaultTimeout(60000);
+        const page = await context.newPage();
+        await loginIfNeeded(page, creds);
+        await openBlogList(page, creds.siteId);
+        await captureDebug(page, "bot-test-ok");
+        await context.storageState({ path: SESSION_FILE });
+        return {
+          ok: true,
+          message: "Bot logged in and opened MailerLite blog list.",
+          url: page.url(),
+        };
+      } finally {
+        await browser.close().catch(() => {});
+      }
+    }, "login test"),
+  );
 }
 
 export async function pushDraftToMailerLite(draftId) {
-  const draft = await draftsModel.getDraftById(draftId);
-  if (!draft) {
-    const err = new Error(`Draft ${draftId} not found`);
-    err.status = 404;
-    throw err;
-  }
+  return withBotLock(() =>
+    withBotTimeout(async () => {
+      const draft = await draftsModel.getDraftById(draftId);
+      if (!draft) {
+        const err = new Error(`Draft ${draftId} not found`);
+        err.status = 404;
+        throw err;
+      }
 
-  const settings = await settingsModel.getSettings();
-  if (!settings.mailerlite_bot_enabled) {
-    const err = new Error("MailerLite browser bot is disabled. Enable it in Blog-2.0 → MailerLite.");
-    err.status = 400;
-    throw err;
-  }
+      const settings = await settingsModel.getSettings();
+      if (!settings.mailerlite_bot_enabled) {
+        const err = new Error(
+          "MailerLite browser bot is disabled. Enable it in Blog-2.0 → MailerLite.",
+        );
+        err.status = 400;
+        throw err;
+      }
 
-  const creds = await getBotCredentials();
-  ensureDirs();
+      const creds = await getBotCredentials();
+      ensureDirs();
 
-  await draftsModel.updateDraftPushStatus(draftId, {
-    mailerlite_push_status: "processing",
-    mailerlite_push_error: null,
-  });
+      await draftsModel.updateDraftPushStatus(draftId, {
+        mailerlite_push_status: "processing",
+        mailerlite_push_error: null,
+      });
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+      const browser = await launchBrowser();
 
-  try {
-    const context = await browser.newContext(
-      fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {},
-    );
-    const page = await context.newPage();
-    await loginIfNeeded(page, creds);
-    await openBlogList(page, creds.siteId);
-    const result = await createBlogDraft(page, draft);
-    await context.storageState({ path: SESSION_FILE });
+      try {
+        const context = await browser.newContext(
+          fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {},
+        );
+        context.setDefaultTimeout(60000);
+        const page = await context.newPage();
+        await loginIfNeeded(page, creds);
+        await openBlogList(page, creds.siteId);
+        const result = await createBlogDraft(page, draft);
+        await context.storageState({ path: SESSION_FILE });
 
-    await draftsModel.updateDraftPushStatus(draftId, {
-      mailerlite_push_status: "pushed",
-      mailerlite_pushed_at: new Date(),
-      mailerlite_push_error: null,
-    });
+        await draftsModel.updateDraftPushStatus(draftId, {
+          mailerlite_push_status: "pushed",
+          mailerlite_pushed_at: new Date(),
+          mailerlite_push_error: null,
+        });
 
-    return { draftId, ...result };
-  } catch (err) {
-    await draftsModel.updateDraftPushStatus(draftId, {
-      mailerlite_push_status: "failed",
-      mailerlite_push_error: err.message,
-    });
-    throw err;
-  } finally {
-    await browser.close();
-  }
+        return { draftId, ...result };
+      } catch (err) {
+        await draftsModel.updateDraftPushStatus(draftId, {
+          mailerlite_push_status: "failed",
+          mailerlite_push_error: err.message,
+        });
+        throw err;
+      } finally {
+        await browser.close().catch(() => {});
+      }
+    }, `push draft ${draftId}`),
+  );
 }
