@@ -97,13 +97,7 @@ async function dismissOverlays(page) {
 async function fillReactInput(page, locator, value) {
   await locator.waitFor({ state: "visible", timeout: 30000 });
   await locator.click();
-  const handle = await locator.elementHandle();
-  if (!handle) {
-    const err = new Error("MailerLite form input not found");
-    err.status = 500;
-    throw err;
-  }
-  await page.evaluate((el, text) => {
+  await locator.evaluate((el, text) => {
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype,
       "value",
@@ -112,8 +106,7 @@ async function fillReactInput(page, locator, value) {
     else el.value = text;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
-  }, handle, value);
-  await handle.dispose();
+  }, value);
   await locator.blur();
 }
 
@@ -559,4 +552,4 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-18-c";
+export const BOT_RUNTIME_VERSION = "2026-09-18-d";
