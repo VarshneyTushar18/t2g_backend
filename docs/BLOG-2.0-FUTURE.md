@@ -2,18 +2,16 @@
 
 Keep this list when improving the MailerLite bot. **Fix the bot first**; add these after push is reliable.
 
-## Phase 2 — OTP in admin (human-in-the-loop)
+## Phase 2 — OTP in admin (human-in-the-loop) — **DONE (v2026-09-30-c)**
 
 When MailerLite shows email verification:
 
-1. Bot sets `mailerlite_session_status = awaiting_otp` (done — alert banner exists).
-2. **Pause** push job for up to ~5 minutes instead of failing immediately.
-3. **Admin UI:** 6-digit OTP field on Blog-2.0 → MailerLite + Submit.
-4. **API:** `POST /api/blog-2.0/mailerlite/bot/otp` `{ "code": "123456" }`.
-5. Bot fills OTP in Playwright (`input[autocomplete="one-time-code"]`, Verify button).
-6. Save refreshed `mailerlite-session.json` and **resume** the push.
+1. Bot sets `mailerlite_session_status = awaiting_otp` and waits up to 5 minutes.
+2. User enters OTP on **Blog-2.0 → MailerLite** (or Drafts banner).
+3. `POST /api/blog-2.0/mailerlite/bot/otp` `{ "code": "123456" }`.
+4. Bot fills OTP, continues push, refreshes session file.
 
-Optional: same OTP API from Teams chatbot / email link.
+Optional later: Teams chatbot using the same OTP API.
 
 ## Phase 3 — Automation
 

@@ -21,6 +21,7 @@ const DEFAULTS = {
   mailerlite_bot_auto_push: false,
   mailerlite_session_status: "ok",
   mailerlite_session_message: "",
+  mailerlite_bot_waiting_otp: false,
   has_mailerlite_login: false,
   approval_emails: [],
   teams_webhook_url: "",
@@ -93,6 +94,7 @@ function mapRow(row) {
     mailerlite_session_status: row.mailerlite_session_status || "ok",
     mailerlite_session_message: row.mailerlite_session_message || "",
     mailerlite_session_needed_at: row.mailerlite_session_needed_at || null,
+    mailerlite_bot_waiting_otp: Boolean(row.mailerlite_bot_waiting_otp),
     has_mailerlite_login: Boolean(row.mailerlite_login_email_enc && row.mailerlite_login_password_enc),
     mailerlite_login_email_hint: null,
     approval_emails: parseJsonArray(row.approval_emails, []),
@@ -184,6 +186,18 @@ export async function ensureBlog20Tables() {
     {
       col: "mailerlite_session_needed_at",
       sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_session_needed_at TIMESTAMP NULL AFTER mailerlite_session_message",
+    },
+    {
+      col: "mailerlite_bot_waiting_otp",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_bot_waiting_otp TINYINT(1) NOT NULL DEFAULT 0 AFTER mailerlite_session_needed_at",
+    },
+    {
+      col: "mailerlite_bot_otp_code",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_bot_otp_code VARCHAR(16) NULL AFTER mailerlite_bot_waiting_otp",
+    },
+    {
+      col: "mailerlite_bot_otp_submitted_at",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_bot_otp_submitted_at TIMESTAMP NULL AFTER mailerlite_bot_otp_code",
     },
   ];
   const [cols] = await blogDb.query(
@@ -419,6 +433,52 @@ export async function clearMailerLiteSessionAlert() {
      SET mailerlite_session_status = 'ok',
          mailerlite_session_message = NULL,
          mailerlite_session_needed_at = NULL
+     WHERE id = 1`,
+  );
+}
+
+export async function setBotWaitingOtp(waiting) {
+  await blogDb.query(
+    `UPDATE blog_2_0_settings SET mailerlite_bot_waiting_otp = ? WHERE id = 1`,
+    [waiting ? 1 : 0],
+  );
+}
+
+export async function submitMailerLiteOtpCode(code) {
+  const normalized = String(code || "").replace(/\D/g, "").slice(0, 12);
+  if (normalized.length < 4) {
+    const err = new Error("OTP must be at least 4 digits.");
+    err.status = 400;
+    throw err;
+  }
+  await blogDb.query(
+    `UPDATE blog_2_0_settings
+     SET mailerlite_bot_otp_code = ?,
+         mailerlite_bot_otp_submitted_at = CURRENT_TIMESTAMP
+     WHERE id = 1`,
+    [normalized],
+  );
+  return normalized;
+}
+
+export async function consumeMailerLiteOtpCode() {
+  const [rows] = await blogDb.query(
+    `SELECT mailerlite_bot_otp_code FROM blog_2_0_settings WHERE id = 1 LIMIT 1`,
+  );
+  const code = rows[0]?.mailerlite_bot_otp_code;
+  if (!code) return null;
+  await blogDb.query(
+    `UPDATE blog_2_0_settings SET mailerlite_bot_otp_code = NULL WHERE id = 1`,
+  );
+  return String(code);
+}
+
+export async function clearBotOtpState() {
+  await blogDb.query(
+    `UPDATE blog_2_0_settings
+     SET mailerlite_bot_waiting_otp = 0,
+         mailerlite_bot_otp_code = NULL,
+         mailerlite_bot_otp_submitted_at = NULL
      WHERE id = 1`,
   );
 }

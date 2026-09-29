@@ -10,7 +10,9 @@ const SESSION_DIR = path.join(process.cwd(), "storage", "blog-2.0");
 const SESSION_FILE = path.join(SESSION_DIR, "mailerlite-session.json");
 const PROFILE_DIR = path.join(SESSION_DIR, "browser-profile");
 const DEBUG_DIR = path.join(process.cwd(), "uploads", "blog20-bot-debug");
-const BOT_TIMEOUT_MS = Number(process.env.BLOG_20_BOT_TIMEOUT_MS) || 5 * 60 * 1000;
+const OTP_WAIT_MS = Number(process.env.BLOG_20_BOT_OTP_WAIT_MS) || 5 * 60 * 1000;
+const BOT_TIMEOUT_MS =
+  Number(process.env.BLOG_20_BOT_TIMEOUT_MS) || 12 * 60 * 1000;
 
 let botBusy = false;
 
@@ -521,14 +523,14 @@ async function ensureMailerLiteSession(page, creds) {
     const blogUrls = buildBlogUrls(creds.siteId);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        await assertMailerLiteSessionUsable(page);
+        await assertMailerLiteSessionUsable(page, { creds });
         if (page.url().includes("accounts.mailerlite.com") || attempt > 1) {
           logStep(`Opening blog directly (attempt ${attempt})`);
           await gotoPage(page, blogUrls[0], "blog (session)");
           await page.waitForTimeout(2500);
         }
-        await assertMailerLiteSessionUsable(page);
-        await openBlogList(page, creds.siteId);
+        await assertMailerLiteSessionUsable(page, { creds });
+        await openBlogList(page, creds.siteId, creds);
         await settingsModel.clearMailerLiteSessionAlert();
         logStep("Saved session is valid");
         return;
@@ -538,7 +540,7 @@ async function ensureMailerLiteSession(page, creds) {
           logStep("Session not on blog yet — retrying dashboard navigation");
           await gotoPage(page, "https://dashboard.mailerlite.com/", "dashboard");
           await page.waitForTimeout(2000);
-          await assertMailerLiteSessionUsable(page);
+          await assertMailerLiteSessionUsable(page, { creds });
         }
       }
     }
@@ -667,19 +669,160 @@ async function markMailerLiteSessionNeeded(page, err) {
   const message =
     err?.message ||
     (isOtp
-      ? "MailerLite email OTP is required. Refresh session on Windows (npm run blog20:save-session), then copy mailerlite-session.json to the server."
-      : "MailerLite browser session expired. Refresh session on Windows, then copy mailerlite-session.json to the server.");
+      ? "MailerLite sent an email verification code. Enter the OTP below in Blog-2.0 admin (MailerLite page)."
+      : "MailerLite browser session expired. Ask your developer to refresh the session, or save bot login credentials in admin.");
   await settingsModel.setMailerLiteSessionAlert({ status, message });
   await notifyMailerLiteSessionNeeded(message);
   logStep(`Session alert set (${status})`);
 }
 
-async function assertMailerLiteSessionUsable(page) {
-  const blocked = await getMailerLiteSessionBlockReason(page);
-  if (blocked) {
-    await markMailerLiteSessionNeeded(page, blocked);
+async function clickSendEmailCodeIfNeeded(page) {
+  const sendBtn = page.locator('button:has-text("Send email code")').first();
+  if (await sendBtn.isVisible({ timeout: 2500 }).catch(() => false)) {
+    logStep("Clicking Send email code");
+    await sendBtn.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+  }
+}
+
+async function fillMailerLiteOtp(page, code) {
+  const digits = String(code || "").replace(/\D/g, "").slice(0, 12);
+  if (!digits) return false;
+
+  const singleInputSelectors = [
+    'input[autocomplete="one-time-code"]',
+    'input[name*="otp" i]',
+    'input[name*="code" i]',
+    'input[inputmode="numeric"]',
+    'input[type="tel"]',
+  ];
+  for (const selector of singleInputSelectors) {
+    const input = page.locator(selector).first();
+    if (await input.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await input.click({ timeout: 5000 }).catch(() => {});
+      await input.fill(digits);
+      await input.dispatchEvent("input");
+      await input.dispatchEvent("change");
+      break;
+    }
+  }
+
+  const boxes = page.locator(
+    'input[maxlength="1"], input[aria-label*="digit" i], input[data-index]',
+  );
+  const boxCount = await boxes.count().catch(() => 0);
+  if (boxCount >= 4 && digits.length >= 4) {
+    for (let i = 0; i < Math.min(boxCount, digits.length); i += 1) {
+      await boxes.nth(i).fill(digits[i]);
+    }
+  }
+
+  const verifyBtn = page
+    .locator("button")
+    .filter({ hasText: /verify|continue|submit|confirm|log in/i })
+    .first();
+  if (await verifyBtn.isVisible({ timeout: 2500 }).catch(() => false)) {
+    await verifyBtn.click({ timeout: 10000 }).catch(() => {});
+  } else {
+    await page.keyboard.press("Enter").catch(() => {});
+  }
+  await page.waitForTimeout(3500);
+  return true;
+}
+
+async function waitForMailerLiteOtpAndResolve(page) {
+  logStep(`Waiting for MailerLite OTP from admin (up to ${Math.round(OTP_WAIT_MS / 60000)} min)`);
+  await settingsModel.setBotWaitingOtp(true);
+  await markMailerLiteSessionNeeded(page, {
+    sessionStatus: "awaiting_otp",
+    message:
+      "MailerLite sent a verification code to the bot login email. Enter the OTP in Blog-2.0 → MailerLite.",
+  });
+  await clickSendEmailCodeIfNeeded(page);
+  await captureDebug(page, "awaiting-otp");
+
+  const deadline = Date.now() + OTP_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (!(await isMailerLiteVerificationPage(page))) {
+      const stillLogin = await hasVisibleLoginForm(page);
+      if (!stillLogin || isOnDashboard(page)) {
+        logStep("MailerLite OTP verification succeeded");
+        await settingsModel.clearBotOtpState();
+        await settingsModel.clearMailerLiteSessionAlert();
+        return;
+      }
+    }
+
+    const code = await settingsModel.consumeMailerLiteOtpCode();
+    if (code) {
+      logStep("OTP received from admin — submitting to MailerLite");
+      await fillMailerLiteOtp(page, code);
+      await page.waitForTimeout(2000);
+      if (!(await isMailerLiteVerificationPage(page))) {
+        logStep("MailerLite OTP accepted");
+        await settingsModel.clearBotOtpState();
+        await settingsModel.clearMailerLiteSessionAlert();
+        return;
+      }
+      logStep("OTP not accepted yet — waiting for another code");
+    }
+
+    await page.waitForTimeout(2000);
+  }
+
+  await settingsModel.setBotWaitingOtp(false);
+  const err = new Error(
+    "MailerLite OTP timed out. Check the bot login email for a new code, submit OTP in admin, and push again.",
+  );
+  err.status = 401;
+  err.sessionStatus = "awaiting_otp";
+  throw err;
+}
+
+async function assertMailerLiteSessionUsable(page, { allowOtpWait = true, creds = null } = {}) {
+  if (await isMailerLiteVerificationPage(page)) {
+    if (allowOtpWait) {
+      await waitForMailerLiteOtpAndResolve(page);
+      return;
+    }
+    const err = await getMailerLiteSessionBlockReason(page);
+    await markMailerLiteSessionNeeded(page, err);
     await captureDebug(page, "session-blocked");
-    throw blocked;
+    throw err;
+  }
+
+  const onLoginPage =
+    page.url().includes("/login") || (await hasVisibleLoginForm(page));
+  if (onLoginPage) {
+    let loginCreds = creds;
+    if (!loginCreds?.email && allowOtpWait) {
+      try {
+        loginCreds = await getBotCredentials();
+      } catch {
+        loginCreds = null;
+      }
+    }
+    if (loginCreds?.email && loginCreds?.password && allowOtpWait) {
+      logStep("MailerLite session expired — logging in with saved bot credentials");
+      await loginIfNeeded(page, loginCreds);
+      if (await isMailerLiteVerificationPage(page)) {
+        await waitForMailerLiteOtpAndResolve(page);
+        return;
+      }
+      if (isOnDashboard(page) || page.url().includes("dashboard.mailerlite.com")) {
+        await settingsModel.clearBotOtpState();
+        await settingsModel.clearMailerLiteSessionAlert();
+        return;
+      }
+    }
+    const err = new Error(
+      "MailerLite browser session expired. Save bot login email/password in Blog-2.0 → MailerLite, then push again.",
+    );
+    err.status = 401;
+    err.sessionStatus = "needed";
+    await markMailerLiteSessionNeeded(page, err);
+    await captureDebug(page, "session-blocked");
+    throw err;
   }
 }
 
@@ -747,13 +890,13 @@ async function findCreatePostButton(page, { timeout = 60000, click = true } = {}
   return null;
 }
 
-async function ensureBlogPostsPage(page, siteId) {
-  await assertMailerLiteSessionUsable(page);
+async function ensureBlogPostsPage(page, siteId, creds = null) {
+  await assertMailerLiteSessionUsable(page, { creds });
   const urls = buildBlogUrls(siteId);
 
   for (const url of urls) {
     await gotoPage(page, url, "blog posts");
-    await assertMailerLiteSessionUsable(page);
+    await assertMailerLiteSessionUsable(page, { creds });
     if (await isMailerLite404Page(page)) {
       logStep(`MailerLite 404 at ${url}`);
       continue;
@@ -797,7 +940,7 @@ async function ensureBlogPostsPage(page, siteId) {
   throw err;
 }
 
-async function openBlogList(page, siteId) {
+async function openBlogList(page, siteId, creds = null) {
   if (
     isOnDashboard(page) &&
     page.url().includes("/blog") &&
@@ -806,7 +949,7 @@ async function openBlogList(page, siteId) {
     logStep("Already on MailerLite blog posts page");
     return;
   }
-  await ensureBlogPostsPage(page, siteId);
+  await ensureBlogPostsPage(page, siteId, creds);
 }
 
 async function findPostOnBlogList(page, title) {
@@ -1679,10 +1822,10 @@ async function tryOpenPostEditorByUrl(page, siteId) {
   return false;
 }
 
-async function createBlogDraft(page, draft, siteId) {
+async function createBlogDraft(page, draft, siteId, creds = null) {
   logStep(`Creating MailerLite post: ${draft.title.slice(0, 80)}`);
   await dismissOverlays(page);
-  await openBlogList(page, siteId);
+  await openBlogList(page, siteId, creds);
 
   logStep("Clicking Create a post on MailerLite blog");
   const createBtn = await findCreatePostButton(page, { timeout: 25000, click: true });
@@ -1813,7 +1956,7 @@ async function createBlogDraft(page, draft, siteId) {
     `https://dashboard.mailerlite.com/sites/${siteId}/blog`;
   const contentUrl = isMailerLiteContentUrl(page.url()) ? page.url() : null;
 
-  await openBlogList(page, siteId);
+  await openBlogList(page, siteId, creds);
   const foundOnList = await findPostOnBlogList(page, draft.title);
   if (!foundOnList) {
     await captureDebug(page, "post-not-on-list-warning");
@@ -1899,7 +2042,7 @@ export async function pushDraftToMailerLite(draftId) {
           logStep("Opening MailerLite blog list");
           await openBlogList(page, creds.siteId);
         }
-        const result = await createBlogDraft(page, draft, creds.siteId);
+        const result = await createBlogDraft(page, draft, creds.siteId, creds);
         logStep(`Push completed for draft #${draftId}`);
         await persistLoginBackup(context);
         await settingsModel.clearMailerLiteSessionAlert();
@@ -1912,7 +2055,8 @@ export async function pushDraftToMailerLite(draftId) {
 
         return { draftId, ...result };
       } catch (err) {
-        if (err?.status === 401) {
+        await settingsModel.setBotWaitingOtp(false).catch(() => {});
+        if (err?.status === 401 && err?.sessionStatus !== "awaiting_otp") {
           await markMailerLiteSessionNeeded(page, err).catch(() => {});
         }
         await draftsModel.updateDraftPushStatus(draftId, {
@@ -1921,6 +2065,7 @@ export async function pushDraftToMailerLite(draftId) {
         });
         throw err;
       } finally {
+        await settingsModel.setBotWaitingOtp(false).catch(() => {});
         await context.close().catch(() => {});
       }
     }, `push draft ${draftId}`),
@@ -2174,11 +2319,46 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-30-b";
+export function isMailerLiteBotBusy() {
+  return botBusy;
+}
+
+export async function getMailerLiteBotStatus() {
+  const settings = await settingsModel.getSettings();
+  return {
+    ok: true,
+    bot_busy: botBusy,
+    waiting_otp: Boolean(settings.mailerlite_bot_waiting_otp),
+    session_status: settings.mailerlite_session_status || "ok",
+    session_message: settings.mailerlite_session_message || "",
+    runtime_version: BOT_RUNTIME_VERSION,
+  };
+}
+
+export async function submitMailerLiteBotOtp(code) {
+  const settings = await settingsModel.getSettings();
+  const canAccept =
+    botBusy ||
+    settings.mailerlite_bot_waiting_otp ||
+    settings.mailerlite_session_status === "awaiting_otp";
+  if (!canAccept) {
+    const err = new Error(
+      "No MailerLite bot job is waiting for OTP. Start a push first, then submit the code when prompted.",
+    );
+    err.status = 409;
+    throw err;
+  }
+  const normalized = await settingsModel.submitMailerLiteOtpCode(code);
+  logStep(`OTP code queued from admin (${normalized.length} digits)`);
+  return {
+    ok: true,
+    message: "OTP submitted. The bot will enter it automatically within a few seconds.",
+  };
+}
+
+export const BOT_RUNTIME_VERSION = "2026-09-30-c";
 
 /**
- * FUTURE (not built yet) — see docs/BLOG-2.0-FUTURE.md
- * - Admin OTP input + bot pause/resume on verification page
- * - Email/Teams notify when awaiting_otp
+ * FUTURE — see docs/BLOG-2.0-FUTURE.md
  * - Newsletter via MailerLite API + Monday scheduler
  */
