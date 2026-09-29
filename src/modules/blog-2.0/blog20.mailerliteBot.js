@@ -763,9 +763,11 @@ async function clickEnabledButton(page, labels) {
 
 async function isBlogEditorOpen(page) {
   const url = page.url();
-  if (/\/posts\/[^/]+\/(edit|content)/i.test(url)) return true;
+  if (/\/posts\/[^/]+\/(edit|content|write)/i.test(url)) return true;
   if (await page
-    .locator('[contenteditable="true"], .ProseMirror, [data-test-id*="editor"]')
+    .locator(
+      '[contenteditable="true"], .ProseMirror, [data-test-id*="editor"], [class*="editor"] [contenteditable]',
+    )
     .first()
     .isVisible({ timeout: 1500 })
     .catch(() => false)) {
@@ -774,22 +776,76 @@ async function isBlogEditorOpen(page) {
   return false;
 }
 
-async function openBlogContentEditor(page) {
-  if (await isBlogEditorOpen(page)) {
-    logStep("MailerLite content editor already open — skipping setup button");
+async function logVisibleButtons(page, label = "debug") {
+  const sample = await page
+    .evaluate(() =>
+      [...document.querySelectorAll("button, a")]
+        .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
+        .filter((t) => t && t.length < 80)
+        .slice(0, 20),
+    )
+    .catch(() => []);
+  if (sample.length) {
+    logStep(`${label} buttons: ${sample.join(" | ")}`);
+  }
+}
+
+async function clickPostInBlogList(page, title) {
+  const snippet = String(title || "").trim().slice(0, 48);
+  if (!snippet) return false;
+
+  const row = page
+    .locator(`tr:has-text("${snippet}"), [role="row"]:has-text("${snippet}")`)
+    .first();
+  if (await row.isVisible({ timeout: 4000 }).catch(() => false)) {
+    logStep(`Opening existing post row: ${snippet.slice(0, 40)}`);
+    await row.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2500);
     return true;
   }
+
+  const editBtn = page
+    .locator(`tr:has-text("${snippet}") button:has-text("Edit"), tr:has-text("${snippet}") a:has-text("Edit")`)
+    .first();
+  if (await editBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await editBtn.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+    return true;
+  }
+
+  return false;
+}
+
+async function clickSetupContinueButton(page) {
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+  await page.waitForTimeout(600);
 
   const labels = [
     "Save and edit content",
     "Save & edit content",
+    "Save and edit",
+    "Save & edit",
     "Save and continue",
     "Edit content",
     "Start writing",
+    "Write content",
     "Continue",
     "Next",
+    "Edit post",
   ];
   if (await clickEnabledButton(page, labels)) {
+    return true;
+  }
+
+  const roleBtn = page.getByRole("button", { name: /save.*edit/i }).first();
+  if (await roleBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await roleBtn.click({ timeout: 10000 }).catch(() => {});
+    return true;
+  }
+
+  const loose = page.locator("button, a").filter({ hasText: /save.*edit|edit content|start writing/i }).first();
+  if (await loose.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await loose.click({ timeout: 10000 }).catch(() => {});
     return true;
   }
 
@@ -797,16 +853,17 @@ async function openBlogContentEditor(page) {
     .evaluate(() => {
       const candidates = [...document.querySelectorAll("button, a")];
       const patterns = [
-        /save.*edit.*content/i,
+        /save.*edit/i,
         /edit content/i,
         /start writing/i,
+        /write content/i,
         /^continue$/i,
         /^next$/i,
       ];
       for (const el of candidates) {
         if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
-        const text = (el.textContent || "").trim();
-        if (!text || text.length > 60) continue;
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text || text.length > 80) continue;
         if (patterns.some((re) => re.test(text))) {
           el.click();
           return text;
@@ -818,10 +875,34 @@ async function openBlogContentEditor(page) {
 
   if (clicked) {
     logStep(`Opened editor via "${clicked}"`);
-    await page.waitForTimeout(2500);
     return true;
   }
 
+  return false;
+}
+
+async function openBlogContentEditor(page, draftTitle = "") {
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    if (await isBlogEditorOpen(page)) {
+      logStep("MailerLite content editor already open — skipping setup button");
+      return true;
+    }
+
+    logStep(`Opening content editor (attempt ${attempt}, URL: ${page.url()})`);
+
+    if (draftTitle && page.url().includes("/blog") && !page.url().includes("/posts/")) {
+      await clickPostInBlogList(page, draftTitle);
+    }
+
+    if (await clickSetupContinueButton(page)) {
+      await page.waitForTimeout(3000);
+      if (await isBlogEditorOpen(page)) return true;
+    }
+
+    await page.waitForTimeout(2000);
+  }
+
+  await logVisibleButtons(page, "Post-setup");
   return false;
 }
 
@@ -885,20 +966,25 @@ async function createBlogDraft(page, draft) {
     err.status = 500;
     throw err;
   }
-  await page.waitForTimeout(4000);
+  await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
+  await page
+    .waitForURL(/\/blog\/posts\//, { timeout: 20000 })
+    .catch(() => {});
+  logStep(`Post-create URL: ${page.url()}`);
+  await page.waitForTimeout(2500);
 
   const excerptArea = page
     .locator(
-      'textarea[name*="excerpt" i], textarea[placeholder*="excerpt" i], label:has-text("Excerpt") + textarea',
+      'textarea[name*="excerpt" i], textarea[placeholder*="excerpt" i], label:has-text("Excerpt") + textarea, textarea:visible',
     )
     .first();
   if (await excerptArea.isVisible({ timeout: 5000 }).catch(() => false)) {
     await typeIntoInput(page, excerptArea, draft.excerpt || draft.title.slice(0, 160));
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(800);
   }
 
   logStep("Opening MailerLite content editor");
-  const openedEditor = await openBlogContentEditor(page);
+  const openedEditor = await openBlogContentEditor(page, draft.title);
   if (!openedEditor) {
     await captureDebug(page, "save-edit-missing");
     const err = new Error(
@@ -1317,4 +1403,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-m";
+export const BOT_RUNTIME_VERSION = "2026-09-29-n";
