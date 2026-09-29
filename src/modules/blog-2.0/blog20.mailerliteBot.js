@@ -6,6 +6,7 @@ import * as draftsModel from "./blog20.drafts.model.js";
 
 const SESSION_DIR = path.join(process.cwd(), "storage", "blog-2.0");
 const SESSION_FILE = path.join(SESSION_DIR, "mailerlite-session.json");
+const PROFILE_DIR = path.join(SESSION_DIR, "browser-profile");
 const DEBUG_DIR = path.join(process.cwd(), "uploads", "blog20-bot-debug");
 const BOT_TIMEOUT_MS = Number(process.env.BLOG_20_BOT_TIMEOUT_MS) || 5 * 60 * 1000;
 
@@ -57,23 +58,43 @@ function useHeadedBrowser() {
   );
 }
 
-async function launchBrowser() {
-  const headed = useHeadedBrowser();
-  if (!headed && fs.existsSync(SESSION_FILE)) {
+const BROWSER_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+];
+
+function hasBrowserProfile() {
+  try {
+    return fs.existsSync(PROFILE_DIR) && fs.readdirSync(PROFILE_DIR).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasSavedLogin() {
+  return hasBrowserProfile() || fs.existsSync(SESSION_FILE);
+}
+
+/** Persistent browser profile — keeps MailerLite login across runs (more reliable than JSON cookies). */
+async function launchBotContext({ headedOverride } = {}) {
+  const headed =
+    headedOverride !== undefined ? headedOverride : useHeadedBrowser();
+  if (!headed && hasSavedLogin()) {
     logStep(
-      "No DISPLAY — saved session needs a headed browser. Use: xvfb-run -a npm run test:blog20-push -- <draftId>",
+      "No DISPLAY — use xvfb-run for push/save-session: xvfb-run -a npm run test:blog20-push -- <id>",
     );
   }
-  return chromium.launch({
+  ensureDirs();
+  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: !headed,
     timeout: 30000,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-    ],
+    args: BROWSER_ARGS,
+    ...getBotContextOptions(),
   });
+  const page = context.pages()[0] || await context.newPage();
+  return { context, page, headed };
 }
 
 export const BOT_USER_AGENT =
@@ -89,14 +110,17 @@ export function getBotContextOptions(extra = {}) {
   };
 }
 
-function newBotContext(browser) {
-  const useSession = fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {};
-  return browser.newContext(getBotContextOptions(useSession));
+function ensureDirs() {
+  for (const dir of [SESSION_DIR, PROFILE_DIR, DEBUG_DIR]) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  }
 }
 
-function ensureDirs() {
-  for (const dir of [SESSION_DIR, DEBUG_DIR]) {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+async function persistLoginBackup(context) {
+  try {
+    await context.storageState({ path: SESSION_FILE });
+  } catch {
+    /* profile is primary; JSON backup is optional */
   }
 }
 
@@ -279,8 +303,12 @@ async function waitForDashboard(page, timeoutMs = 90000) {
 }
 
 async function ensureMailerLiteSession(page, creds) {
-  if (fs.existsSync(SESSION_FILE)) {
-    logStep("Trying saved MailerLite session");
+  if (hasSavedLogin()) {
+    logStep(
+      hasBrowserProfile()
+        ? "Trying saved MailerLite login (browser profile)"
+        : "Trying saved MailerLite session (JSON)",
+    );
     const blogUrl = `https://dashboard.mailerlite.com/sites/${creds.siteId}/blog/posts`;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
@@ -631,25 +659,22 @@ export async function testMailerLiteBotLogin() {
   return withBotLock(async () =>
     withBotTimeout(async () => {
       const creds = await getBotCredentials();
-      ensureDirs();
-      const browser = await launchBrowser();
+      const { context, page } = await launchBotContext();
       try {
-        const context = await newBotContext(browser);
         context.setDefaultTimeout(60000);
-        const page = await context.newPage();
         await ensureMailerLiteSession(page, creds);
         if (!page.url().includes("/blog")) {
           await openBlogList(page, creds.siteId);
         }
         await captureDebug(page, "bot-test-ok");
-        await context.storageState({ path: SESSION_FILE });
+        await persistLoginBackup(context);
         return {
           ok: true,
           message: "Bot logged in and opened MailerLite blog list.",
           url: page.url(),
         };
       } finally {
-        await browser.close().catch(() => {});
+        await context.close().catch(() => {});
       }
     }, "login test"),
   );
@@ -683,12 +708,10 @@ export async function pushDraftToMailerLite(draftId) {
         mailerlite_push_error: null,
       });
 
-      const browser = await launchBrowser();
+      const { context, page } = await launchBotContext();
 
       try {
-        const context = await newBotContext(browser);
         context.setDefaultTimeout(60000);
-        const page = await context.newPage();
         logStep("Ensuring MailerLite session");
         await ensureMailerLiteSession(page, creds);
         if (!page.url().includes("/blog")) {
@@ -697,7 +720,7 @@ export async function pushDraftToMailerLite(draftId) {
         }
         const result = await createBlogDraft(page, draft);
         logStep(`Push completed for draft #${draftId}`);
-        await context.storageState({ path: SESSION_FILE });
+        await persistLoginBackup(context);
 
         await draftsModel.updateDraftPushStatus(draftId, {
           mailerlite_push_status: "pushed",
@@ -713,7 +736,7 @@ export async function pushDraftToMailerLite(draftId) {
         });
         throw err;
       } finally {
-        await browser.close().catch(() => {});
+        await context.close().catch(() => {});
       }
     }, `push draft ${draftId}`),
   );
@@ -755,6 +778,7 @@ export async function watchMailerLiteSetupProgress(page, siteId, { timeoutMs = 1
   const seen = new Set(["started"]);
   logSetupStep(SETUP_STEPS[0], page.url());
 
+  let lastHintAt = 0;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const current = await detectSetupStep(page, siteId);
@@ -762,7 +786,17 @@ export async function watchMailerLiteSetupProgress(page, siteId, { timeoutMs = 1
       seen.add(current);
       const step = SETUP_STEPS.find((s) => s.key === current);
       if (step) logSetupStep(step, page.url());
+      if (current === "accounts") {
+        console.log(
+          "[blog-2.0-setup] → Now open: Sites → Tech2globe → Blog → Posts (or wait for redirect)",
+        );
+      }
       if (current === "ready") return { ok: true, steps: [...seen] };
+    } else if (Date.now() - lastHintAt > 30000 && !seen.has("ready")) {
+      lastHintAt = Date.now();
+      console.log(
+        `[blog-2.0-setup] Still waiting… current page: ${page.url()} — go to Blog → Posts, do NOT press Enter yet`,
+      );
     }
     await page.waitForTimeout(1200);
   }
@@ -782,53 +816,36 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   const siteId = settings.mailerlite_site_id || "196949098888169226";
   ensureDirs();
 
-  const browser = await chromium.launch({
-    headless: false,
-    timeout: 30000,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-    ],
-  });
+  const { context, page } = await launchBotContext({ headedOverride: true });
 
   try {
-    const context = await browser.newContext(getBotContextOptions());
-    const page = await context.newPage();
     const blogUrl = `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`;
 
     console.log("\n[blog-2.0-setup] Follow along in the browser. Steps will print below:\n");
+    console.log(`[blog-2.0-setup] Browser profile: ${PROFILE_DIR}\n`);
 
     await gotoPage(page, blogUrl, "blog (save session)");
 
-    if (autoWatch && typeof waitForUser !== "function") {
+    console.log(
+      "\n[blog-2.0-setup] Log in → go to Sites → Tech2globe → Blog → Posts.\n" +
+        "[blog-2.0-setup] Wait for Step 6/7 — do NOT press Enter or Ctrl+C until auto-save.\n",
+    );
+
+    if (autoWatch) {
       await watchMailerLiteSetupProgress(page, siteId);
-    } else if (autoWatch) {
-      const watchPromise = watchMailerLiteSetupProgress(page, siteId);
-      console.log(
-        "\n[blog-2.0-setup] Log in and navigate to Blog → Posts. " +
-          "Steps update automatically. Press Enter when done OR wait for Step 6/7.\n",
-      );
-      await Promise.race([
-        watchPromise,
-        waitForUser("Press Enter to save session now (or wait for auto-detect)… "),
-      ]);
     } else if (typeof waitForUser === "function") {
-      await waitForUser(
-        "\nLog into MailerLite if prompted. When you see Create a post, press Enter…\n",
-      );
+      await waitForUser("\nWhen you see Create a post, press Enter…\n");
     }
 
-    logStep("Verifying blog access before saving session");
+    logStep("Verifying blog access before saving login");
     await openBlogList(page, siteId);
-    await context.storageState({ path: SESSION_FILE });
-    logSetupStep(SETUP_STEPS[6], SESSION_FILE);
-    logStep(`Session saved to ${SESSION_FILE}`);
-    return { ok: true, path: SESSION_FILE, url: page.url() };
+    await persistLoginBackup(context);
+    logSetupStep(SETUP_STEPS[6], PROFILE_DIR);
+    logStep(`Login saved to browser profile: ${PROFILE_DIR}`);
+    return { ok: true, profileDir: PROFILE_DIR, sessionFile: SESSION_FILE, url: page.url() };
   } finally {
-    await browser.close().catch(() => {});
+    await context.close().catch(() => {});
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-c";
+export const BOT_RUNTIME_VERSION = "2026-09-29-e";
