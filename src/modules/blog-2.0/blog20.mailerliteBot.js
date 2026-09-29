@@ -835,35 +835,94 @@ async function clickEnabledButton(page, labels) {
   return false;
 }
 
-async function saveMailerLiteContentDraft(page) {
-  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
-  await page.waitForTimeout(500);
+async function waitForMailerLiteEditorIdle(page, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const busy = await page
+      .locator('button:has-text("Please wait"), [aria-busy="true"]')
+      .first()
+      .isVisible({ timeout: 400 })
+      .catch(() => false);
+    if (!busy) return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
 
-  const draftSelectors = [
-    page.getByRole("button", { name: /save as draft/i }).first(),
-    page.locator('button').filter({ hasText: /save as draft/i }).first(),
-    page.locator('button').filter({ hasText: /^save draft$/i }).first(),
+async function clickSaveAsDraftViaDom(page) {
+  const label = await page
+    .evaluate(() => {
+      const candidates = [...document.querySelectorAll("button, a, [role='button']")];
+      for (const el of candidates) {
+        if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text || text.length > 48) continue;
+        if (!/^save as draft$/i.test(text) && !/^save draft$/i.test(text)) continue;
+        el.scrollIntoView({ block: "center", inline: "center" });
+        el.click();
+        return text;
+      }
+      return null;
+    })
+    .catch(() => null);
+  if (!label) return false;
+  logStep(`Clicked Save as draft via DOM ("${label}")`);
+  await page.waitForTimeout(2500);
+  return true;
+}
+
+async function openMailerLiteSaveMenu(page) {
+  const menus = [
+    page.locator("button").filter({ hasText: /^actions$/i }).first(),
+    page.locator("button").filter({ hasText: /toggle dropdown/i }).first(),
+    page.locator('button[aria-haspopup="menu"]').first(),
+    page.locator('button').filter({ hasText: /save and publish/i }).first(),
   ];
-  for (const btn of draftSelectors) {
-    if (!(await btn.isVisible({ timeout: 2500 }).catch(() => false))) continue;
-    if (!(await btn.isEnabled().catch(() => false))) continue;
-    logStep("Clicking Save as draft");
-    await btn.click({ timeout: 10000 });
-    await page.waitForTimeout(2500);
-    return true;
+  for (const menu of menus) {
+    if (!(await menu.isVisible({ timeout: 1500 }).catch(() => false))) continue;
+    if (!(await menu.isEnabled().catch(() => false))) continue;
+    logStep("Opening MailerLite save menu");
+    await menu.click({ timeout: 10000 });
+    await page.waitForTimeout(1000);
+    if (await clickSaveAsDraftViaDom(page)) return true;
+    if (await clickEnabledButton(page, ["Save as draft", "Save draft"])) return true;
+    await page.keyboard.press("Escape").catch(() => {});
+  }
+  return false;
+}
+
+async function saveMailerLiteContentDraft(page) {
+  await dismissOverlays(page);
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+  await page.waitForTimeout(1000);
+  await waitForMailerLiteEditorIdle(page, 30000);
+
+  const deadline = Date.now() + 40000;
+  while (Date.now() < deadline) {
+    const draftSelectors = [
+      page.getByRole("button", { name: /^save as draft$/i }).first(),
+      page.locator("button, a").filter({ hasText: /^save as draft$/i }).last(),
+      page.locator("button, a").filter({ hasText: /^save draft$/i }).last(),
+    ];
+    for (const btn of draftSelectors) {
+      if (!(await btn.isVisible({ timeout: 800 }).catch(() => false))) continue;
+      if (!(await btn.isEnabled().catch(() => false))) continue;
+      logStep("Clicking Save as draft");
+      await btn.scrollIntoViewIfNeeded().catch(() => {});
+      await btn.click({ timeout: 10000 });
+      await page.waitForTimeout(2500);
+      return true;
+    }
+
+    if (await clickSaveAsDraftViaDom(page)) return true;
+    if (await clickEnabledButton(page, ["Save as draft", "Save draft"])) return true;
+    if (await openMailerLiteSaveMenu(page)) return true;
+
+    await page.waitForTimeout(700);
   }
 
-  if (await clickEnabledButton(page, ["Save as draft", "Save draft"])) {
-    return true;
-  }
-
-  const saveBtn = page.locator('button').filter({ hasText: /^save$/i }).first();
-  if (await saveBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await saveBtn.click({ timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(800);
-    return clickEnabledButton(page, ["Save as draft", "Save draft"]);
-  }
-
+  await logVisibleButtons(page, "Save-draft");
   return false;
 }
 
@@ -1726,17 +1785,24 @@ async function createBlogDraft(page, draft, siteId) {
     await captureDebug(page, "body-fill-skipped");
   }
 
-  await page.waitForTimeout(1200);
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.waitForTimeout(2000);
 
   logStep("Saving post as draft in MailerLite editor");
   const saved = await saveMailerLiteContentDraft(page);
   if (!saved) {
     await captureDebug(page, "save-draft-missing");
-    const err = new Error(
-      "Could not find Save as draft in MailerLite editor. Check uploads/blog20-bot-debug/.",
-    );
-    err.status = 500;
-    throw err;
+    if (filled) {
+      logStep(
+        "Save as draft button not found — content was filled; post may already be auto-saved in MailerLite",
+      );
+    } else {
+      const err = new Error(
+        "Could not find Save as draft in MailerLite editor. Check uploads/blog20-bot-debug/.",
+      );
+      err.status = 500;
+      throw err;
+    }
   }
 
   await page.waitForTimeout(4000);
@@ -2108,7 +2174,7 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-30-a";
+export const BOT_RUNTIME_VERSION = "2026-09-30-b";
 
 /**
  * FUTURE (not built yet) — see docs/BLOG-2.0-FUTURE.md
