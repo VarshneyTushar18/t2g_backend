@@ -876,13 +876,47 @@ async function findBestContentEditable(page) {
   return best;
 }
 
+async function readEditableLength(loc) {
+  return loc
+    .evaluate((el) => (el.textContent || el.innerText || el.value || "").trim().length)
+    .catch(() => 0);
+}
+
 async function insertIntoEditable(page, target, text) {
-  const { root, loc } = target;
+  const { loc } = target;
+  const value = String(text || "").slice(0, 50000);
+  if (!value) return false;
+
   await loc.scrollIntoViewIfNeeded().catch(() => {});
   await loc.click({ timeout: 10000 });
-  await root.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-  await root.keyboard.insertText(text);
+  const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
+
+  try {
+    await loc.fill(value);
+    if ((await readEditableLength(loc)) > 20) return true;
+  } catch {
+    // fill() is not supported on every contenteditable implementation
+  }
+
+  await loc.click({ timeout: 5000 }).catch(() => {});
+  await page.keyboard.press(selectAll);
+  await page.keyboard.insertText(value);
+  await page.waitForTimeout(500);
+  if ((await readEditableLength(loc)) > 20) return true;
+
+  await loc.evaluate((el, body) => {
+    el.focus();
+    if (el.isContentEditable) {
+      el.innerHTML = "";
+      el.textContent = body;
+    } else if ("value" in el) {
+      el.value = body;
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
   await page.waitForTimeout(800);
+  return (await readEditableLength(loc)) > 0;
 }
 
 async function addBlockFromSidebar(page, blockPattern) {
@@ -946,8 +980,18 @@ async function fillMailerLiteBlockEditor(page, html, plainBody) {
   }
 
   if (!target) return false;
-  await insertIntoEditable(page, target, text.slice(0, 50000));
-  return true;
+  try {
+    const inserted = await insertIntoEditable(page, target, text);
+    if (inserted) {
+      logStep("MailerLite block editor body filled");
+      return true;
+    }
+    logStep("MailerLite block editor body fill did not stick");
+    return false;
+  } catch (err) {
+    logStep(`MailerLite block editor body fill error: ${err.message}`);
+    return false;
+  }
 }
 
 async function fillMailerLiteBody(page, html) {
@@ -965,8 +1009,12 @@ async function fillMailerLiteBody(page, html) {
 
   const target = await findBestContentEditable(page);
   if (target) {
-    await insertIntoEditable(page, target, plainBody.slice(0, 50000));
-    return true;
+    try {
+      return await insertIntoEditable(page, target, plainBody);
+    } catch (err) {
+      logStep(`MailerLite body fill error: ${err.message}`);
+      return false;
+    }
   }
 
   const bodyTextarea = page.locator("textarea:visible").first();
@@ -1808,4 +1856,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-v";
+export const BOT_RUNTIME_VERSION = "2026-09-29-w";
