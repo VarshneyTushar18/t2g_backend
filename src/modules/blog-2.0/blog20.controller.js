@@ -92,7 +92,9 @@ export async function getDraft(req, res) {
 
 export async function pushDraftToMailerLiteSite(req, res) {
   try {
-    const result = await pushDraftToMailerLite(Number(req.params.id));
+    const result = await pushDraftToMailerLite(Number(req.params.id), {
+      publishLive: Boolean(req.body?.publish_live),
+    });
     res.json({ success: true, ...result });
   } catch (err) {
     console.error("[blog-2.0] bot push failed:", err.message || err);

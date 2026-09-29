@@ -56,17 +56,26 @@ export function buildBlog20DecisionUrls(approvalId, expiresAt) {
   if (!base) {
     return {
       approveUrl: null,
+      approveDraftUrl: null,
+      approvePublishUrl: null,
       rejectUrl: null,
       previewUrl: null,
       missingBase: true,
     };
   }
   const root = `${base}/api/blog-2.0/approvals/go`;
-  const approve = signBlog20ApprovalToken(approvalId, "approve", expiresAt);
+  const approveDraft = signBlog20ApprovalToken(approvalId, "approve_draft", expiresAt);
+  const approvePublish = signBlog20ApprovalToken(approvalId, "approve_publish", expiresAt);
+  const approveLegacy = signBlog20ApprovalToken(approvalId, "approve", expiresAt);
   const reject = signBlog20ApprovalToken(approvalId, "reject", expiresAt);
   const preview = signBlog20ApprovalToken(approvalId, "preview", expiresAt);
+  const approveDraftUrl = `${root}?token=${encodeURIComponent(approveDraft)}`;
+  const approvePublishUrl = `${root}?token=${encodeURIComponent(approvePublish)}`;
   return {
-    approveUrl: `${root}?token=${encodeURIComponent(approve)}`,
+    approveUrl: approveDraftUrl,
+    approveDraftUrl,
+    approvePublishUrl,
+    approveLegacyUrl: `${root}?token=${encodeURIComponent(approveLegacy)}`,
     rejectUrl: `${root}?token=${encodeURIComponent(reject)}`,
     previewUrl: `${root}?token=${encodeURIComponent(preview)}`,
     missingBase: false,
@@ -100,7 +109,7 @@ function shell({ title, eyebrow, bodyHtml }) {
           </tr>
           <tr>
             <td style="padding:16px 28px 24px;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b;">
-              Secure one-time links. Yes starts the MailerLite bot (saves as draft on the client website). Final Publish is done in MailerLite.
+              Secure one-time links. Choose Save as draft or Publish live — the MailerLite bot runs automatically.
             </td>
           </tr>
         </table>
@@ -129,7 +138,23 @@ function draftSummaryBlock(draft, clientBlogUrl) {
   `;
 }
 
-function ctaButtons({ approveUrl, rejectUrl, previewUrl }) {
+function ctaButtons({
+  approveDraftUrl,
+  approvePublishUrl,
+  rejectUrl,
+  previewUrl,
+  allowDirectPublish = true,
+}) {
+  const publishRow = allowDirectPublish
+    ? `<tr>
+        <td style="padding-right:10px;padding-bottom:10px;">
+          <a href="${approvePublishUrl}" style="display:inline-block;background:#0d9488;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">3. Publish live on website</a>
+        </td>
+      </tr>`
+    : "";
+  const tip = allowDirectPublish
+    ? "Save as draft → MailerLite draft (publish later). Publish live → bot clicks Publish on the website. No → stays in Admin only."
+    : "Save as draft → bot creates draft on MailerLite. No → stays in Admin only.";
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" style="margin:8px 0 18px;">
       <tr>
@@ -139,35 +164,38 @@ function ctaButtons({ approveUrl, rejectUrl, previewUrl }) {
       </tr>
       <tr>
         <td style="padding-right:10px;padding-bottom:10px;">
-          <a href="${approveUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">2. Yes — Push to MailerLite</a>
+          <a href="${approveDraftUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">2. Save as draft on website</a>
         </td>
+      </tr>
+      ${publishRow}
+      <tr>
         <td style="padding-bottom:10px;">
-          <a href="${rejectUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">3. No — Keep draft</a>
+          <a href="${rejectUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">${allowDirectPublish ? "4" : "3"}. No — reject</a>
         </td>
       </tr>
     </table>
-    <p style="font-size:12px;color:#64748b;margin:0;">
-      Preview → read full article. Yes → bot creates draft on MailerLite website. No → stays in Admin only.
-    </p>
+    <p style="font-size:12px;color:#64748b;margin:0;">${tip}</p>
   `;
 }
 
 export function buildBlog20ApprovalRequestEmail({
   draft,
   clientBlogUrl,
-  approveUrl,
+  approveDraftUrl,
+  approvePublishUrl,
   rejectUrl,
   previewUrl,
   requesterEmail,
   expiresAt,
   isReminder = false,
+  allowDirectPublish = true,
 }) {
   const title = isReminder
-    ? `Reminder: Push “${draft.title}” to MailerLite?`
-    : `Approve blog for MailerLite: “${draft.title}”?`;
+    ? `Reminder: Approve “${draft.title}”?`
+    : `Approve blog: “${draft.title}”?`;
   const intro = isReminder
     ? `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Reminder — a Bright CRM blog draft is waiting for your decision.</p>`
-    : `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">A new blog draft is ready. Preview it, then choose <strong>Yes</strong> to push to the MailerLite website (bot saves as draft) or <strong>No</strong> to keep it in Admin only.</p>`;
+    : `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">A new blog draft is ready. Preview it, then choose <strong>Save as draft</strong>${allowDirectPublish ? " or <strong>Publish live</strong>" : ""} on the MailerLite website, or <strong>No</strong> to reject.</p>`;
 
   const bodyHtml = `
     ${intro}
@@ -177,7 +205,13 @@ export function buildBlog20ApprovalRequestEmail({
     </p>
     ${draftSummaryBlock(draft, clientBlogUrl)}
     <p style="margin:0 0 14px;font-size:15px;"><strong>What do you want to do?</strong></p>
-    ${ctaButtons({ approveUrl, rejectUrl, previewUrl })}
+    ${ctaButtons({
+      approveDraftUrl,
+      approvePublishUrl,
+      rejectUrl,
+      previewUrl,
+      allowDirectPublish,
+    })}
   `;
 
   return {
@@ -202,24 +236,28 @@ export function buildBlog20DecisionConfirmationEmail({
   const approved = decision === "approved";
   const pushed = pushResult?.ok === true;
   const pushFailed = pushResult && pushResult.ok === false;
-  let title = approved ? `Approved: ${draft.title}` : `Kept as draft: ${draft.title}`;
-  if (approved && pushed) title = `Pushed to MailerLite: ${draft.title}`;
-  if (approved && pushFailed) title = `Approved but push failed: ${draft.title}`;
+  const publishedLive = Boolean(pushResult?.published);
+  let title = approved ? `Approved: ${draft.title}` : `Rejected: ${draft.title}`;
+  if (approved && pushed && publishedLive) title = `Published live: ${draft.title}`;
+  if (approved && pushed && !publishedLive) title = `Saved as draft: ${draft.title}`;
+  if (approved && pushFailed) title = `Approved but bot failed: ${draft.title}`;
 
   const bodyHtml = `
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">
       ${
         approved
           ? pushed
-            ? "The MailerLite bot saved this post as a <strong>draft</strong> on the client website. Open MailerLite and click <strong>Publish</strong> when ready."
+            ? publishedLive
+              ? "The MailerLite bot <strong>published this post live</strong> on the client website."
+              : "The MailerLite bot saved this post as a <strong>draft</strong> on the client website. Open MailerLite and click <strong>Publish</strong> when ready."
             : pushFailed
-              ? `You approved this blog. The MailerLite bot could not complete the push: <strong>${escapeHtml(pushResult.error || "unknown error")}</strong>. Retry from Admin → Blog-2.0 → Drafts.`
-              : "You approved this blog. The MailerLite bot is pushing it now — you will receive another email when the push finishes."
-          : "You declined. The post remains a <strong>draft</strong> in Blog-2.0 Admin."
+              ? `You approved this blog. The MailerLite bot could not complete: <strong>${escapeHtml(pushResult.error || "unknown error")}</strong>. Retry from Admin → Blog-2.0 → Drafts.`
+              : "You approved this blog. The MailerLite bot is running now — you will receive another email when it finishes."
+          : "You declined. The post remains in <strong>Blog-2.0 Admin</strong> only."
       }
     </p>
     <p style="margin:0 0 14px;font-size:14px;color:#475569;">
-      Decision: <strong>${approved ? "YES — Push to MailerLite" : "NO — Keep draft"}</strong><br/>
+      Decision: <strong>${approved ? (publishedLive ? "Publish live" : "Save as draft") : "NO — Reject"}</strong><br/>
       Recorded via: <strong>${escapeHtml(decidedByEmail || "secure email link")}</strong>
     </p>
     ${draftSummaryBlock(draft, clientBlogUrl)}
@@ -228,11 +266,13 @@ export function buildBlog20DecisionConfirmationEmail({
   return {
     subject: approved
       ? pushed
-        ? `[Confirmed] MailerLite draft ready: ${draft.title}`
+        ? publishedLive
+          ? `[Confirmed] Published live: ${draft.title}`
+          : `[Confirmed] MailerLite draft ready: ${draft.title}`
         : pushFailed
-          ? `[Failed] MailerLite push: ${draft.title}`
+          ? `[Failed] MailerLite bot: ${draft.title}`
           : `[Confirmed] Approved: ${draft.title}`
-      : `[Confirmed] Kept as draft: ${draft.title}`,
+      : `[Confirmed] Rejected: ${draft.title}`,
     html: shell({
       title,
       eyebrow: "Decision recorded",
@@ -276,10 +316,12 @@ export function renderBlog20DecisionPage({
 
 export function renderBlog20PreviewPage({
   draft,
-  approveUrl,
+  approveDraftUrl,
+  approvePublishUrl,
   rejectUrl,
   decision,
   expiresAt,
+  allowDirectPublish = true,
 }) {
   const pending = decision === "pending";
   const content = String(draft.content || "");
@@ -295,6 +337,7 @@ export function renderBlog20PreviewPage({
     .bar .meta { font-family:Segoe UI,Arial,sans-serif; font-size:13px; opacity:0.9; }
     .bar a { font-family:Segoe UI,Arial,sans-serif; text-decoration:none; padding:10px 14px; border-radius:8px; font-weight:700; font-size:13px; }
     .yes { background:#16a34a; color:#fff; }
+    .publish { background:#0d9488; color:#fff; }
     .no { background:#dc2626; color:#fff; }
     .closed { font-family:Segoe UI,Arial,sans-serif; background:#334155; color:#fff; padding:10px 14px; border-radius:8px; }
     .wrap { max-width:760px; margin:28px auto 48px; padding:0 16px; }
@@ -321,8 +364,9 @@ export function renderBlog20PreviewPage({
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       ${
         pending
-          ? `<a class="yes" href="${approveUrl}">Yes — Push to MailerLite</a>
-             <a class="no" href="${rejectUrl}">No — Keep draft</a>`
+          ? `<a class="yes" href="${approveDraftUrl}">Save as draft</a>
+             ${allowDirectPublish ? `<a class="publish" href="${approvePublishUrl}">Publish live</a>` : ""}
+             <a class="no" href="${rejectUrl}">Reject</a>`
           : `<span class="closed">Request already ${escapeHtml(decision)}</span>`
       }
     </div>

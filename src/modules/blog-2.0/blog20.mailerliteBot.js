@@ -1123,6 +1123,49 @@ async function openMailerLiteSaveMenu(page) {
   return false;
 }
 
+async function clickSaveAndPublishViaDom(page) {
+  const label = await page
+    .evaluate(() => {
+      const candidates = [...document.querySelectorAll("button, a, [role='button']")];
+      for (const el of candidates) {
+        if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text || text.length > 48) continue;
+        if (/unpublish/i.test(text)) continue;
+        if (!/^save and publish$/i.test(text) && !/^publish$/i.test(text)) continue;
+        el.scrollIntoView({ block: "center", inline: "center" });
+        el.click();
+        return text;
+      }
+      return null;
+    })
+    .catch(() => null);
+  if (!label) return false;
+  logStep(`Clicked Publish via DOM ("${label}")`);
+  await page.waitForTimeout(3000);
+  return true;
+}
+
+async function openMailerLitePublishMenu(page) {
+  const menus = [
+    page.locator("button").filter({ hasText: /^actions$/i }).first(),
+    page.locator("button").filter({ hasText: /toggle dropdown/i }).first(),
+    page.locator('button[aria-haspopup="menu"]').first(),
+    page.locator("button").filter({ hasText: /save and publish/i }).first(),
+  ];
+  for (const menu of menus) {
+    if (!(await menu.isVisible({ timeout: 1500 }).catch(() => false))) continue;
+    if (!(await menu.isEnabled().catch(() => false))) continue;
+    logStep("Opening MailerLite publish menu");
+    await menu.click({ timeout: 10000 });
+    await page.waitForTimeout(1000);
+    if (await clickSaveAndPublishViaDom(page)) return true;
+    if (await clickEnabledButton(page, ["Save and publish", "Publish"])) return true;
+    await page.keyboard.press("Escape").catch(() => {});
+  }
+  return false;
+}
+
 async function saveMailerLiteContentDraft(page) {
   await dismissOverlays(page);
   await page.keyboard.press("Escape").catch(() => {});
@@ -1156,6 +1199,51 @@ async function saveMailerLiteContentDraft(page) {
 
   await logVisibleButtons(page, "Save-draft");
   return false;
+}
+
+async function saveMailerLiteContentPublish(page) {
+  await dismissOverlays(page);
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+  await page.waitForTimeout(1000);
+  await waitForMailerLiteEditorIdle(page, 30000);
+
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    const publishSelectors = [
+      page.getByRole("button", { name: /^save and publish$/i }).first(),
+      page.getByRole("button", { name: /^publish$/i }).first(),
+      page.locator("button, a").filter({ hasText: /^save and publish$/i }).last(),
+      page
+        .locator("button, a")
+        .filter({ hasText: /^publish$/i })
+        .filter({ hasNotText: /unpublish/i })
+        .last(),
+    ];
+    for (const btn of publishSelectors) {
+      if (!(await btn.isVisible({ timeout: 800 }).catch(() => false))) continue;
+      if (!(await btn.isEnabled().catch(() => false))) continue;
+      logStep("Clicking Save and publish / Publish");
+      await btn.scrollIntoViewIfNeeded().catch(() => {});
+      await btn.click({ timeout: 10000 });
+      await page.waitForTimeout(3000);
+      return true;
+    }
+
+    if (await clickSaveAndPublishViaDom(page)) return true;
+    if (await clickEnabledButton(page, ["Save and publish", "Publish"])) return true;
+    if (await openMailerLitePublishMenu(page)) return true;
+
+    await page.waitForTimeout(700);
+  }
+
+  await logVisibleButtons(page, "Publish-live");
+  return false;
+}
+
+async function saveMailerLiteContent(page, { publishLive = false } = {}) {
+  if (publishLive) return saveMailerLiteContentPublish(page);
+  return saveMailerLiteContentDraft(page);
 }
 
 function isMailerLiteContentUrl(url = "") {
@@ -1911,7 +1999,8 @@ async function tryOpenPostEditorByUrl(page, siteId) {
   return false;
 }
 
-async function createBlogDraft(page, draft, siteId, creds = null) {
+async function createBlogDraft(page, draft, siteId, creds = null, options = {}) {
+  const { publishLive = false } = options;
   setBotJobPhase(4, `Creating post: ${draft.title.slice(0, 60)}`);
   logStep(`Creating MailerLite post: ${draft.title.slice(0, 80)}`);
   await dismissOverlays(page);
@@ -2023,18 +2112,31 @@ async function createBlogDraft(page, draft, siteId, creds = null) {
   await page.keyboard.press("Escape").catch(() => {});
   await page.waitForTimeout(2000);
 
-  setBotJobPhase(7, "Saving post as draft in MailerLite");
-  logStep("Saving post as draft in MailerLite editor");
-  const saved = await saveMailerLiteContentDraft(page);
+  setBotJobPhase(
+    7,
+    publishLive
+      ? "Publishing post live on MailerLite"
+      : "Saving post as draft in MailerLite",
+  );
+  logStep(
+    publishLive
+      ? "Publishing post live in MailerLite editor"
+      : "Saving post as draft in MailerLite editor",
+  );
+  const saved = await saveMailerLiteContent(page, { publishLive });
   if (!saved) {
-    await captureDebug(page, "save-draft-missing");
+    await captureDebug(page, publishLive ? "publish-live-missing" : "save-draft-missing");
     if (filled) {
       logStep(
-        "Save as draft button not found — content was filled; post may already be auto-saved in MailerLite",
+        publishLive
+          ? "Publish button not found — content was filled; check MailerLite manually"
+          : "Save as draft button not found — content was filled; post may already be auto-saved in MailerLite",
       );
     } else {
       const err = new Error(
-        "Could not find Save as draft in MailerLite editor. Check uploads/blog20-bot-debug/.",
+        publishLive
+          ? "Could not find Publish / Save and publish in MailerLite editor. Check uploads/blog20-bot-debug/."
+          : "Could not find Save as draft in MailerLite editor. Check uploads/blog20-bot-debug/.",
       );
       err.status = 500;
       throw err;
@@ -2065,9 +2167,14 @@ async function createBlogDraft(page, draft, siteId, creds = null) {
     title: draft.title,
     slug: draft.slug,
     mailerlite_dashboard_url: contentUrl || blogBase,
-    note: foundOnList
-      ? `Draft "${draft.title}" created on MailerLite. It may show as unpublished/draft in Posts.`
-      : `Draft "${draft.title}" saved in MailerLite editor. Open Posts → Drafts if it is not on the list yet.`,
+    published: publishLive,
+    note: publishLive
+      ? foundOnList
+        ? `"${draft.title}" published live on the MailerLite website.`
+        : `"${draft.title}" publish was clicked — verify it is live in MailerLite Posts.`
+      : foundOnList
+        ? `Draft "${draft.title}" created on MailerLite. It may show as unpublished/draft in Posts.`
+        : `Draft "${draft.title}" saved in MailerLite editor. Open Posts → Drafts if it is not on the list yet.`,
   };
 }
 
@@ -2097,10 +2204,13 @@ export async function testMailerLiteBotLogin() {
   );
 }
 
-export async function pushDraftToMailerLite(draftId) {
+export async function pushDraftToMailerLite(draftId, options = {}) {
+  const publishLive = Boolean(options.publishLive);
   return withBotLock(async () =>
     withBotTimeout(async () => {
-      logStep(`Push started for draft #${draftId}`);
+      logStep(
+        `Push started for draft #${draftId}${publishLive ? " (publish live)" : " (save as draft)"}`,
+      );
       const draft = await draftsModel.getDraftById(draftId);
       if (!draft) {
         const err = new Error(`Draft ${draftId} not found`);
@@ -2140,8 +2250,12 @@ export async function pushDraftToMailerLite(draftId) {
           logStep("Opening MailerLite blog list");
           await openBlogList(page, creds.siteId);
         }
-        const result = await createBlogDraft(page, draft, creds.siteId, creds);
-        logStep(`Push completed for draft #${draftId}`);
+        const result = await createBlogDraft(page, draft, creds.siteId, creds, {
+          publishLive,
+        });
+        logStep(
+          `Push completed for draft #${draftId}${publishLive ? " (published)" : ""}`,
+        );
         await persistLoginBackup(context);
         await settingsModel.clearMailerLiteSessionAlert();
 

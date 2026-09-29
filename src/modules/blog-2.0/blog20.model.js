@@ -19,6 +19,7 @@ const DEFAULTS = {
   mailerlite_site_id: "196949098888169226",
   mailerlite_bot_enabled: false,
   mailerlite_bot_auto_push: false,
+  mailerlite_allow_direct_publish: true,
   mailerlite_session_status: "ok",
   mailerlite_session_message: "",
   mailerlite_bot_waiting_otp: false,
@@ -91,6 +92,11 @@ function mapRow(row) {
     mailerlite_site_id: row.mailerlite_site_id || DEFAULTS.mailerlite_site_id,
     mailerlite_bot_enabled: Boolean(row.mailerlite_bot_enabled),
     mailerlite_bot_auto_push: Boolean(row.mailerlite_bot_auto_push),
+    mailerlite_allow_direct_publish:
+      row.mailerlite_allow_direct_publish === undefined ||
+      row.mailerlite_allow_direct_publish === null
+        ? true
+        : Boolean(row.mailerlite_allow_direct_publish),
     mailerlite_session_status: row.mailerlite_session_status || "ok",
     mailerlite_session_message: row.mailerlite_session_message || "",
     mailerlite_session_needed_at: row.mailerlite_session_needed_at || null,
@@ -166,6 +172,10 @@ export async function ensureBlog20Tables() {
     {
       col: "mailerlite_bot_auto_push",
       sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_bot_auto_push TINYINT(1) NOT NULL DEFAULT 0 AFTER mailerlite_bot_enabled",
+    },
+    {
+      col: "mailerlite_allow_direct_publish",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_allow_direct_publish TINYINT(1) NOT NULL DEFAULT 1 AFTER mailerlite_bot_auto_push",
     },
     {
       col: "mailerlite_login_email_enc",
@@ -331,11 +341,12 @@ export async function upsertSettings(payload, updatedBy = null) {
        mailerlite_enabled, mailerlite_api_key_enc, mailerlite_api_key_hint,
        mailerlite_from_email, mailerlite_from_name, mailerlite_group_id,
        mailerlite_site_id, mailerlite_bot_enabled, mailerlite_bot_auto_push,
+       mailerlite_allow_direct_publish,
        mailerlite_login_email_enc, mailerlite_login_password_enc,
        approval_emails, teams_webhook_url, timezone, automation_frequency,
        automation_run_days, automation_run_time, newsletter_send_timing, newsletter_send_time,
        notes, updated_by)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
       project_name = VALUES(project_name),
       client_site_url = VALUES(client_site_url),
@@ -351,6 +362,7 @@ export async function upsertSettings(payload, updatedBy = null) {
       mailerlite_site_id = VALUES(mailerlite_site_id),
       mailerlite_bot_enabled = VALUES(mailerlite_bot_enabled),
       mailerlite_bot_auto_push = VALUES(mailerlite_bot_auto_push),
+      mailerlite_allow_direct_publish = VALUES(mailerlite_allow_direct_publish),
       mailerlite_login_email_enc = VALUES(mailerlite_login_email_enc),
       mailerlite_login_password_enc = VALUES(mailerlite_login_password_enc),
       approval_emails = VALUES(approval_emails),
@@ -385,6 +397,11 @@ export async function upsertSettings(payload, updatedBy = null) {
       payload.mailerlite_bot_auto_push !== undefined
         ? payload.mailerlite_bot_auto_push ? 1 : 0
         : current.mailerlite_bot_auto_push || 0,
+      payload.mailerlite_allow_direct_publish !== undefined
+        ? payload.mailerlite_allow_direct_publish ? 1 : 0
+        : current.mailerlite_allow_direct_publish !== false
+          ? 1
+          : 0,
       mailerlite_login_email_enc,
       mailerlite_login_password_enc,
       approvalEmails,

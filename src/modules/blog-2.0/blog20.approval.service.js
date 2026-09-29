@@ -54,12 +54,14 @@ async function sendApprovalMail({
   const mail = buildBlog20ApprovalRequestEmail({
     draft,
     clientBlogUrl,
-    approveUrl: urls.approveUrl,
+    approveDraftUrl: urls.approveDraftUrl,
+    approvePublishUrl: urls.approvePublishUrl,
     rejectUrl: urls.rejectUrl,
     previewUrl: urls.previewUrl,
     requesterEmail,
     expiresAt,
     isReminder,
+    allowDirectPublish: settings.mailerlite_allow_direct_publish !== false,
   });
 
   const sent = await sendHtmlEmail({
@@ -105,6 +107,7 @@ function runMailerLitePushInBackground({
   draftId,
   decidedByEmail,
   approval,
+  publishLive = false,
 }) {
   void (async () => {
     let pushResult = { ok: false, error: "unknown" };
@@ -113,7 +116,7 @@ function runMailerLitePushInBackground({
         mailerlite_push_status: "processing",
         mailerlite_push_error: null,
       });
-      const result = await pushDraftToMailerLite(draftId);
+      const result = await pushDraftToMailerLite(draftId, { publishLive });
       pushResult = { ok: true, ...result };
       await approvalModel.updateApprovalPushStatus(approvalId, {
         mailerlite_push_status: "pushed",
@@ -256,6 +259,9 @@ export async function handleBlog20SignedAction({ token, actorEmail = null }) {
     status: approval.draft_status,
   };
 
+  const settings = await settingsModel.getSettings();
+  const allowDirectPublish = settings.mailerlite_allow_direct_publish !== false;
+
   if (payload.act === "preview") {
     const urls = buildBlog20DecisionUrls(approval.id, approval.expires_at);
     return {
@@ -263,15 +269,18 @@ export async function handleBlog20SignedAction({ token, actorEmail = null }) {
       status: 200,
       html: renderBlog20PreviewPage({
         draft: draftShape,
-        approveUrl: urls.approveUrl,
+        approveDraftUrl: urls.approveDraftUrl,
+        approvePublishUrl: urls.approvePublishUrl,
         rejectUrl: urls.rejectUrl,
         decision: approval.decision,
         expiresAt: approval.expires_at,
+        allowDirectPublish,
       }),
     };
   }
 
-  if (payload.act !== "approve" && payload.act !== "reject") {
+  const approveActs = ["approve", "approve_draft", "approve_publish"];
+  if (!approveActs.includes(payload.act) && payload.act !== "reject") {
     return {
       ok: false,
       status: 400,
@@ -311,13 +320,29 @@ export async function handleBlog20SignedAction({ token, actorEmail = null }) {
     };
   }
 
-  const wantApprove = payload.act === "approve";
+  const wantApprove = approveActs.includes(payload.act);
+  const publishLive = payload.act === "approve_publish";
   const decision = wantApprove ? "approved" : "rejected";
+
+  if (publishLive && !allowDirectPublish) {
+    return {
+      ok: false,
+      status: 403,
+      html: renderBlog20DecisionPage({
+        ok: false,
+        decision: null,
+        postTitle: approval.title,
+        message:
+          "Direct publish is disabled in Blog-2.0 settings. Use Save as draft instead, or ask admin to enable Publish live in approval emails.",
+      }),
+    };
+  }
 
   const updated = await approvalModel.markDecision(
     approval.id,
     decision,
     actorEmail,
+    wantApprove ? (publishLive ? "live" : "draft") : null,
   );
   if (!updated || updated.decision !== decision) {
     return {
@@ -332,7 +357,6 @@ export async function handleBlog20SignedAction({ token, actorEmail = null }) {
     };
   }
 
-  const settings = await settingsModel.getSettings();
   const mailerLiteDashboard = settings.client_blog_url || settings.client_site_url || null;
 
   if (wantApprove) {
@@ -380,6 +404,7 @@ export async function handleBlog20SignedAction({ token, actorEmail = null }) {
       draftId: approval.draft_id,
       decidedByEmail: actorEmail,
       approval,
+      publishLive,
     });
 
     return {
@@ -390,8 +415,9 @@ export async function handleBlog20SignedAction({ token, actorEmail = null }) {
         ok: true,
         decision,
         postTitle: approval.title,
-        message:
-          "Thank you. The MailerLite bot is pushing this draft to the client website now (saved as draft). You will receive a confirmation email when it finishes. Then open MailerLite and click Publish.",
+        message: publishLive
+          ? "Thank you. The MailerLite bot is publishing this post live on the client website now. You will receive a confirmation email when it finishes."
+          : "Thank you. The MailerLite bot is saving this post as a draft on the client website now. You will receive a confirmation email when it finishes. You can Publish later in MailerLite if needed.",
         mailerLiteUrl: mailerLiteDashboard,
       }),
     };
@@ -449,24 +475,27 @@ export async function sendTestBlog20ApprovalEmail(recipientsInput) {
     content: "<p>Sample content only — not a real draft.</p>",
   };
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const settings = await settingsModel.getSettings();
   const urls = buildBlog20DecisionUrls("00000000-0000-4000-8000-000000000002", expiresAt);
   const mail = buildBlog20ApprovalRequestEmail({
     draft: sampleDraft,
     clientBlogUrl: "https://preview.mailerlite.io/example/blog",
-    approveUrl: urls.approveUrl,
+    approveDraftUrl: urls.approveDraftUrl,
+    approvePublishUrl: urls.approvePublishUrl,
     rejectUrl: urls.rejectUrl,
     previewUrl: urls.previewUrl,
     requesterEmail: "blog-2.0@tech2globe.com",
     expiresAt,
     isReminder: false,
+    allowDirectPublish: settings.mailerlite_allow_direct_publish !== false,
   });
 
   await sendHtmlEmail({
     to: recipients,
     subject: `[TEST] ${mail.subject}`,
     html: mail.html.replace(
-      /Approve blog for MailerLite/,
-      "TEST EMAIL — sample only. Approve blog for MailerLite",
+      /Approve blog:/,
+      "TEST EMAIL — sample only. Approve blog:",
     ),
   });
 

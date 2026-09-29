@@ -23,6 +23,7 @@ export async function ensureBlog20ApprovalTables() {
       approval_emails JSON NULL,
       mailerlite_push_status ENUM('idle','queued','processing','pushed','failed') NOT NULL DEFAULT 'idle',
       mailerlite_push_error TEXT NULL,
+      publish_mode ENUM('draft','live') NULL,
       decided_at DATETIME NULL,
       decided_by_email VARCHAR(191) NULL,
       expires_at DATETIME NOT NULL,
@@ -31,6 +32,17 @@ export async function ensureBlog20ApprovalTables() {
       KEY idx_blog20_approval_pending (decision, expires_at)
     )
   `);
+  const [cols] = await blogDb.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'blog_2_0_draft_approvals'`,
+  );
+  const existing = new Set(cols.map((c) => c.COLUMN_NAME));
+  if (!existing.has("publish_mode")) {
+    await blogDb.query(
+      `ALTER TABLE blog_2_0_draft_approvals
+       ADD COLUMN publish_mode ENUM('draft','live') NULL AFTER mailerlite_push_error`,
+    );
+  }
 }
 
 export async function createApproval({
@@ -99,15 +111,21 @@ export async function getApprovalById(id) {
   };
 }
 
-export async function markDecision(approvalId, decision, decidedByEmail = null) {
+export async function markDecision(
+  approvalId,
+  decision,
+  decidedByEmail = null,
+  publishMode = null,
+) {
   await ensureBlog20ApprovalTables();
   const [result] = await blogDb.query(
     `UPDATE blog_2_0_draft_approvals
      SET decision = ?,
          decided_at = CURRENT_TIMESTAMP,
-         decided_by_email = ?
+         decided_by_email = ?,
+         publish_mode = COALESCE(?, publish_mode)
      WHERE id = ? AND decision = 'pending'`,
-    [decision, decidedByEmail || null, approvalId],
+    [decision, decidedByEmail || null, publishMode || null, approvalId],
   );
   if (!result.affectedRows) {
     return getApprovalById(approvalId);
