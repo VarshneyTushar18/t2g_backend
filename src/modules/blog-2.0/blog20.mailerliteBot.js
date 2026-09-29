@@ -794,23 +794,50 @@ async function clickPostInBlogList(page, title) {
   const snippet = String(title || "").trim().slice(0, 48);
   if (!snippet) return false;
 
+  const postLink = page
+    .locator(`a[href*="/blog/posts/"]`)
+    .filter({ hasText: snippet })
+    .first();
+  if (await postLink.isVisible({ timeout: 5000 }).catch(() => false)) {
+    logStep(`Opening post link: ${snippet.slice(0, 40)}`);
+    await postLink.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+    return page.url().includes("/posts/");
+  }
+
   const row = page
-    .locator(`tr:has-text("${snippet}"), [role="row"]:has-text("${snippet}")`)
+    .locator(
+      `tr:has-text("${snippet}"), [role="row"]:has-text("${snippet}"), [class*="post"]:has-text("${snippet}")`,
+    )
     .first();
   if (await row.isVisible({ timeout: 4000 }).catch(() => false)) {
     logStep(`Opening existing post row: ${snippet.slice(0, 40)}`);
     await row.click({ timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(2500);
-    return true;
+    if (page.url().includes("/posts/")) return true;
+  }
+
+  const titleHit = page.getByText(snippet, { exact: false }).first();
+  if (await titleHit.isVisible({ timeout: 4000 }).catch(() => false)) {
+    await titleHit.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    const nearbyLink = page.locator(`a[href*="/blog/posts/"]`).first();
+    if (await nearbyLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await nearbyLink.click({ timeout: 10000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+      return page.url().includes("/posts/");
+    }
   }
 
   const editBtn = page
-    .locator(`tr:has-text("${snippet}") button:has-text("Edit"), tr:has-text("${snippet}") a:has-text("Edit")`)
+    .locator(
+      `button:has-text("Edit"), a:has-text("Edit"), [aria-label*="Edit" i]`,
+    )
     .first();
-  if (await editBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await editBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await editBtn.click({ timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(2500);
-    return true;
+    return page.url().includes("/posts/");
   }
 
   return false;
@@ -906,46 +933,60 @@ async function openBlogContentEditor(page, draftTitle = "") {
   return false;
 }
 
-async function clickDialogCreate(page) {
-  const dialogCreate = page
-    .locator('[role="dialog"] button')
-    .filter({ hasText: /^create$/i })
+async function submitNewPostDialog(page, title) {
+  const dialog = page.locator('[role="dialog"]');
+  if (!(await dialog.isVisible({ timeout: 8000 }).catch(() => false))) {
+    return { ok: false, reason: "dialog-missing" };
+  }
+
+  const titleInput = dialog
+    .locator('input[type="text"], input[placeholder*="title" i]')
     .first();
-  if (await dialogCreate.isVisible({ timeout: 5000 }).catch(() => false)) {
-    for (let i = 0; i < 25; i += 1) {
-      if (await dialogCreate.isEnabled().catch(() => false)) {
-        await dialogCreate.click({ timeout: 10000 });
-        await page.waitForTimeout(2000);
-        return true;
-      }
-      await page.waitForTimeout(300);
+  await titleInput.click({ timeout: 10000 });
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press("Backspace");
+  await titleInput.pressSequentially(title, { delay: 35 });
+  await titleInput.dispatchEvent("input");
+  await titleInput.dispatchEvent("change");
+  await page.waitForTimeout(1200);
+
+  const entered = await titleInput.inputValue().catch(() => "");
+  if (!entered || entered.length < 3) {
+    return { ok: false, reason: `title-not-filled (${entered.length} chars)` };
+  }
+
+  const createBtn = dialog.locator("button").filter({ hasText: /^create($|\s)/i }).last();
+  if (!(await createBtn.isVisible({ timeout: 5000 }).catch(() => false))) {
+    const labels = await dialog.locator("button").allTextContents().catch(() => []);
+    return { ok: false, reason: `create-btn-missing (${labels.join(" | ")})` };
+  }
+
+  for (let i = 0; i < 30; i += 1) {
+    if (await createBtn.isEnabled().catch(() => false)) break;
+    await page.waitForTimeout(300);
+  }
+  if (!(await createBtn.isEnabled().catch(() => false))) {
+    return { ok: false, reason: "create-disabled" };
+  }
+
+  logStep("Clicking Create in new post dialog");
+  await createBtn.click({ timeout: 10000 });
+  await page.waitForTimeout(3500);
+
+  if (page.url().includes("/blog/posts/")) {
+    return { ok: true, mode: "url" };
+  }
+  if (await findPostOnBlogList(page, title)) {
+    return { ok: true, mode: "list" };
+  }
+  if (!(await dialog.isVisible({ timeout: 1000 }).catch(() => false))) {
+    await page.waitForTimeout(2000);
+    if (await findPostOnBlogList(page, title)) {
+      return { ok: true, mode: "list-delayed" };
     }
   }
 
-  const clicked = await page
-    .evaluate(() => {
-      const buttons = [...document.querySelectorAll("button")];
-      const btn = buttons.find((el) => {
-        const text = (el.textContent || "").trim();
-        return /^create$/i.test(text) && !/create a post/i.test(text) && !el.disabled;
-      });
-      if (!btn) return false;
-      btn.click();
-      return true;
-    })
-    .catch(() => false);
-
-  if (clicked) return true;
-
-  const titleInput = page
-    .locator('[role="dialog"] input[type="text"], input[placeholder*="title" i]')
-    .first();
-  if (await titleInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await titleInput.press("Enter");
-    await page.waitForTimeout(1500);
-    return !(await titleInput.isVisible().catch(() => false));
-  }
-  return false;
+  return { ok: false, reason: "no-post-created", url: page.url() };
 }
 
 async function extractBlogPostId(page) {
@@ -1000,24 +1041,17 @@ async function createBlogDraft(page, draft, siteId) {
   }
   await page.waitForTimeout(1200);
 
-  const titleInput = page
-    .locator(
-      '[role="dialog"] input[type="text"], input[placeholder*="post title" i], input[placeholder*="title" i]',
-    )
-    .first();
-  await typeIntoInput(page, titleInput, draft.title);
-  await page.waitForTimeout(800);
-
   logStep("Confirming new post title in MailerLite dialog");
-  const created = await clickDialogCreate(page);
-  if (!created) {
+  const createResult = await submitNewPostDialog(page, draft.title);
+  if (!createResult.ok) {
     await captureDebug(page, "create-title-stuck");
     const err = new Error(
-      "MailerLite did not accept the post title (Create button stayed disabled).",
+      `MailerLite did not create the post (${createResult.reason || "unknown"} at ${createResult.url || page.url()}).`,
     );
     err.status = 500;
     throw err;
   }
+  logStep(`Post created (${createResult.mode || "ok"})`);
   await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
   await page
     .waitForURL(/\/blog\/posts\//, { timeout: 20000 })
@@ -1471,4 +1505,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-p";
+export const BOT_RUNTIME_VERSION = "2026-09-29-q";
