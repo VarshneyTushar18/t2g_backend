@@ -790,27 +790,191 @@ async function waitForPostCreateNavigation(page, timeoutMs = 28000) {
   return page.url();
 }
 
+function htmlToPlainText(html = "") {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/h[1-6]>/gi, "\n\n")
+    .replace(/<li[^>]*>/gi, "\n- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function isMailerLiteBlockEditorOpen(page) {
+  if (!isMailerLiteContentUrl(page.url())) return false;
+  const markers = [
+    page.locator('button').filter({ hasText: /save as draft/i }).first(),
+    page.locator('button').filter({ hasText: /^all blocks$/i }).first(),
+    page.locator('button').filter({ hasText: /save and publish/i }).first(),
+    page.locator('button').filter({ hasText: /remove content blocks/i }).first(),
+  ];
+  for (const marker of markers) {
+    if (await marker.isVisible({ timeout: 2000 }).catch(() => false)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function waitForMailerLiteEditor(page, timeoutMs = 25000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isBlogEditorOpen(page)) return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
+
 async function isBlogEditorOpen(page) {
   const url = page.url();
   if (/\/posts\/[^/]+\/(edit|content|write)/i.test(url)) return true;
-  if (isMailerLiteContentUrl(url)) {
-    const editor = page.locator(
-      '[contenteditable="true"], .ProseMirror, [data-test-id*="editor"], textarea[class*="editor"], iframe[title*="editor" i]',
-    );
-    if (await editor.first().isVisible({ timeout: 1500 }).catch(() => false)) {
-      return true;
-    }
-    return false;
-  }
-  if (await page
-    .locator(
-      '[contenteditable="true"], .ProseMirror, [data-test-id*="editor"], [class*="editor"] [contenteditable]',
-    )
-    .first()
-    .isVisible({ timeout: 1500 })
-    .catch(() => false)) {
+  if (isMailerLiteContentUrl(url) && (await isMailerLiteBlockEditorOpen(page))) {
     return true;
   }
+  const richEditor = page.locator(
+    '[contenteditable="true"], .ProseMirror, [data-test-id*="editor"], textarea[class*="editor"], iframe[title*="editor" i]',
+  );
+  if (await richEditor.first().isVisible({ timeout: 1500 }).catch(() => false)) {
+    return true;
+  }
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    const frameEditor = frame.locator('[contenteditable="true"], .ProseMirror, textarea').first();
+    if (await frameEditor.isVisible({ timeout: 400 }).catch(() => false)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function findBestContentEditable(page) {
+  const roots = [page, ...page.frames().filter((f) => f !== page.mainFrame())];
+  let best = null;
+  let bestArea = 0;
+  for (const root of roots) {
+    const editables = root.locator('[contenteditable="true"]');
+    const count = await editables.count().catch(() => 0);
+    for (let i = 0; i < count; i += 1) {
+      const loc = editables.nth(i);
+      if (!(await loc.isVisible({ timeout: 400 }).catch(() => false))) continue;
+      const box = await loc.boundingBox().catch(() => null);
+      if (!box || box.width < 120 || box.height < 20 || box.top < 60) continue;
+      const area = box.width * box.height;
+      if (area > bestArea) {
+        bestArea = area;
+        best = { root, loc };
+      }
+    }
+  }
+  return best;
+}
+
+async function insertIntoEditable(page, target, text) {
+  const { root, loc } = target;
+  await loc.scrollIntoViewIfNeeded().catch(() => {});
+  await loc.click({ timeout: 10000 });
+  await root.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await root.keyboard.insertText(text);
+  await page.waitForTimeout(800);
+}
+
+async function addBlockFromSidebar(page, blockPattern) {
+  const allBlocksBtn = page.locator('button').filter({ hasText: /^all blocks$/i }).first();
+  if (!(await allBlocksBtn.isVisible({ timeout: 2500 }).catch(() => false))) {
+    return false;
+  }
+  await allBlocksBtn.click({ timeout: 10000 });
+  await page.waitForTimeout(1200);
+  const blockBtn = page
+    .locator('button, [role="button"], [role="menuitem"], a, [class*="block"]')
+    .filter({ hasText: blockPattern })
+    .first();
+  if (!(await blockBtn.isVisible({ timeout: 4000 }).catch(() => false))) {
+    await page.keyboard.press("Escape").catch(() => {});
+    return false;
+  }
+  await blockBtn.click({ timeout: 10000 });
+  await page.waitForTimeout(1500);
+  return true;
+}
+
+async function fillMailerLiteBlockEditor(page, html, plainBody) {
+  const text = plainBody || htmlToPlainText(html);
+  if (!text) return false;
+
+  logStep("Filling MailerLite block editor body");
+  await dismissOverlays(page);
+  await page.waitForTimeout(1500);
+
+  let target = await findBestContentEditable(page);
+  if (!target) {
+    const placeholder = page
+      .getByText(/click to edit|start typing|add content|type here|write something/i)
+      .first();
+    if (await placeholder.isVisible({ timeout: 2500 }).catch(() => false)) {
+      await placeholder.click({ timeout: 10000 });
+      await page.waitForTimeout(1000);
+      target = await findBestContentEditable(page);
+    }
+  }
+
+  if (!target) {
+    for (const pattern of [/custom html/i, /^html$/i, /rich text/i, /^text$/i, /paragraph/i]) {
+      if (await addBlockFromSidebar(page, pattern)) {
+        target = await findBestContentEditable(page);
+        if (target) break;
+      }
+    }
+  }
+
+  if (!target) {
+    const canvas = page
+      .locator('[class*="canvas"], [class*="builder"], [class*="content-block"]')
+      .first();
+    if (await canvas.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await canvas.click({ timeout: 10000, position: { x: 240, y: 280 } }).catch(() => {});
+      await page.waitForTimeout(1000);
+      target = await findBestContentEditable(page);
+    }
+  }
+
+  if (!target) return false;
+  await insertIntoEditable(page, target, text.slice(0, 50000));
+  return true;
+}
+
+async function fillMailerLiteBody(page, html) {
+  const plainBody = htmlToPlainText(html.replace(/<h1[^>]*>.*?<\/h1>/i, ""));
+  const blockEditor = await isMailerLiteBlockEditorOpen(page);
+  if (blockEditor) {
+    return fillMailerLiteBlockEditor(page, html, plainBody);
+  }
+
+  const codeBtn = page.locator('button:has-text("HTML"), button:has-text("Code")').first();
+  if (await codeBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await codeBtn.click();
+    await page.waitForTimeout(800);
+  }
+
+  const target = await findBestContentEditable(page);
+  if (target) {
+    await insertIntoEditable(page, target, plainBody.slice(0, 50000));
+    return true;
+  }
+
+  const bodyTextarea = page.locator("textarea:visible").first();
+  if (await bodyTextarea.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await bodyTextarea.fill(plainBody.slice(0, 50000));
+    return true;
+  }
+
   return false;
 }
 
@@ -949,17 +1113,22 @@ async function clickSetupContinueButton(page) {
 }
 
 async function openBlogContentEditor(page, draftTitle = "") {
-  for (let attempt = 1; attempt <= 6; attempt += 1) {
+  if (isMailerLiteContentUrl(page.url())) {
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    await dismissOverlays(page);
+    if (await waitForMailerLiteEditor(page, 20000)) {
+      logStep("MailerLite block/content editor already open");
+      return true;
+    }
+  }
+
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
     if (await isBlogEditorOpen(page)) {
       logStep("MailerLite content editor already open — skipping setup button");
       return true;
     }
 
     logStep(`Opening content editor (attempt ${attempt}, URL: ${page.url()})`);
-    if (isMailerLiteContentUrl(page.url()) && attempt === 1) {
-      await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
-      await dismissOverlays(page);
-    }
 
     if (draftTitle && page.url().includes("/blog") && !page.url().includes("/posts/")) {
       await clickPostInBlogList(page, draftTitle);
@@ -1107,21 +1276,15 @@ async function tryOpenPostEditorByUrl(page, siteId) {
   const contentMatch = page.url().match(/\/content\/([^/?#]+)/i);
   if (contentMatch?.[1]) {
     logStep(`On MailerLite content page (${contentMatch[1]}) — opening editor`);
-    if (await isBlogEditorOpen(page)) return true;
+    await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    if (await waitForMailerLiteEditor(page, 25000)) {
+      logStep("MailerLite block/content editor ready");
+      return true;
+    }
     if (await clickSetupContinueButton(page)) {
       await page.waitForTimeout(2500);
-      if (await isBlogEditorOpen(page)) return true;
-    }
-    for (const suffix of ["edit", "write", ""]) {
-      const path = suffix
-        ? `/sites/${siteId}/content/${contentMatch[1]}/${suffix}`
-        : `/sites/${siteId}/content/${contentMatch[1]}`;
-      await gotoPage(page, `https://dashboard.mailerlite.com${path}`, "content editor URL");
-      if (await isBlogEditorOpen(page)) return true;
-      if (await clickSetupContinueButton(page)) {
-        await page.waitForTimeout(2500);
-        if (await isBlogEditorOpen(page)) return true;
-      }
+      if (await waitForMailerLiteEditor(page, 15000)) return true;
     }
   }
 
@@ -1243,35 +1406,28 @@ async function createBlogDraft(page, draft, siteId) {
     err.status = 500;
     throw err;
   }
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(3000);
 
   const html = String(draft.content || "").trim();
-  const plainBody = html.replace(/<h1[^>]*>.*?<\/h1>/i, "").trim();
-  const codeBtn = page.locator('button:has-text("HTML"), button:has-text("Code")').first();
-  if (await codeBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await codeBtn.click();
-    await page.waitForTimeout(800);
-  }
-
-  const editable = page.locator('[contenteditable="true"]').first();
-  const bodyTextarea = page.locator("textarea").first();
-  if (await editable.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await editable.click();
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-    await page.keyboard.insertText(plainBody);
-  } else if (await bodyTextarea.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await bodyTextarea.fill(plainBody);
-  } else {
-    await captureDebug(page, "editor-missing");
-    const err = new Error("MailerLite content editor not found after opening post.");
-    err.status = 500;
-    throw err;
+  const filled = await fillMailerLiteBody(page, html);
+  if (!filled) {
+    logStep(
+      "Could not auto-fill body in MailerLite editor — will still save title-only draft",
+    );
+    await captureDebug(page, "body-fill-skipped");
   }
 
   await page.waitForTimeout(1200);
 
   logStep("Saving post as draft in MailerLite editor");
   let saved = await clickEnabledButton(page, ["Save as draft", "Save draft"]);
+  if (!saved) {
+    const draftBtn = page.locator('button').filter({ hasText: /^save as draft$/i }).first();
+    if (await draftBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await draftBtn.click({ timeout: 10000 }).catch(() => {});
+      saved = true;
+    }
+  }
   if (!saved) {
     saved = await clickEnabledButton(page, ["Save"]);
     if (saved) {
@@ -1652,4 +1808,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-u";
+export const BOT_RUNTIME_VERSION = "2026-09-29-v";
