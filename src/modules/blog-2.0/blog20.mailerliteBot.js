@@ -776,7 +776,18 @@ function isMailerLitePostUrl(url = "") {
 }
 
 function isPostCreateSuccessUrl(url = "") {
-  return isMailerLiteContentUrl(url) || isMailerLitePostUrl(url);
+  const normalized = String(url || "").trim();
+  return isMailerLiteContentUrl(normalized) || isMailerLitePostUrl(normalized);
+}
+
+async function waitForPostCreateNavigation(page, timeoutMs = 28000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const url = page.url();
+    if (isPostCreateSuccessUrl(url)) return url;
+    await page.waitForTimeout(450);
+  }
+  return page.url();
 }
 
 async function isBlogEditorOpen(page) {
@@ -1029,52 +1040,60 @@ async function submitNewPostForm(page, title) {
 
   const scopes = [
     page.locator('[role="dialog"]'),
-    page.locator("main"),
     page.locator('[class*="modal"]'),
+    page.locator("main"),
     page,
   ];
+  let createBtn = null;
   for (const scope of scopes) {
     if (scope !== page && !(await scope.isVisible({ timeout: 400 }).catch(() => false))) {
       continue;
     }
-    const createBtn = scope
+    const candidate = scope
       .locator("button")
       .filter({
         hasText: /^(create($|\s)|save and edit|save & edit|continue|next)/i,
       })
       .last();
-    if (!(await createBtn.isVisible({ timeout: 2000 }).catch(() => false))) continue;
+    if (!(await candidate.isVisible({ timeout: 2000 }).catch(() => false))) continue;
 
     for (let i = 0; i < 30; i += 1) {
-      if (await createBtn.isEnabled().catch(() => false)) break;
+      if (await candidate.isEnabled().catch(() => false)) break;
       await page.waitForTimeout(300);
     }
-    if (!(await createBtn.isEnabled().catch(() => false))) continue;
-
-    logStep("Clicking create/save on new post form");
-    await createBtn.click({ timeout: 10000 });
-    await page
-      .waitForURL(
-        (u) => isPostCreateSuccessUrl(u.toString()),
-        { timeout: 20000 },
-      )
-      .catch(() => {});
-    await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(2500);
-
-    const url = page.url();
-    if (isPostCreateSuccessUrl(url)) {
-      return { ok: true, mode: isMailerLiteContentUrl(url) ? "content-url" : "url" };
-    }
-    if (await findPostOnBlogList(page, title)) return { ok: true, mode: "list" };
-    if (await isBlogEditorOpen(page)) return { ok: true, mode: "editor" };
-    if (await clickSetupContinueButton(page)) {
-      await page.waitForTimeout(2000);
-      if (await isBlogEditorOpen(page)) return { ok: true, mode: "editor-after-save" };
-    }
+    if (!(await candidate.isEnabled().catch(() => false))) continue;
+    createBtn = candidate;
+    break;
   }
 
-  return { ok: false, reason: "no-post-created", url: page.url() };
+  if (!createBtn) {
+    return { ok: false, reason: "create-button-missing", url: page.url() };
+  }
+
+  logStep("Clicking create/save on new post form");
+  await createBtn.click({ timeout: 10000 });
+  const url = await waitForPostCreateNavigation(page, 28000);
+  await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+
+  if (isPostCreateSuccessUrl(url)) {
+    logStep(`Post shell ready at ${url}`);
+    return { ok: true, mode: isMailerLiteContentUrl(url) ? "content-url" : "url" };
+  }
+  if (await findPostOnBlogList(page, title)) return { ok: true, mode: "list" };
+  if (await isBlogEditorOpen(page)) return { ok: true, mode: "editor" };
+  if (await clickSetupContinueButton(page)) {
+    await page.waitForTimeout(2000);
+    if (await isBlogEditorOpen(page)) return { ok: true, mode: "editor-after-save" };
+  }
+
+  const finalUrl = page.url();
+  if (isPostCreateSuccessUrl(finalUrl)) {
+    logStep(`Post shell ready (late) at ${finalUrl}`);
+    return { ok: true, mode: isMailerLiteContentUrl(finalUrl) ? "content-url-late" : "url-late" };
+  }
+
+  return { ok: false, reason: "no-post-created", url: finalUrl };
 }
 
 async function extractBlogPostId(page) {
@@ -1633,4 +1652,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-t";
+export const BOT_RUNTIME_VERSION = "2026-09-29-u";
