@@ -79,6 +79,14 @@ function hasSavedLogin() {
   return hasBrowserProfile() || fs.existsSync(SESSION_FILE);
 }
 
+/** Windows Chrome profile cookies are OS-encrypted and fail on Linux — use Playwright JSON there. */
+function shouldUseSessionJson() {
+  if (process.env.BLOG20_USE_SESSION_JSON === "0") return false;
+  if (!fs.existsSync(SESSION_FILE)) return false;
+  if (process.env.BLOG20_USE_SESSION_JSON === "1") return true;
+  return process.platform === "linux";
+}
+
 function shouldUseInstalledChrome({ headed, useChromeChannel } = {}) {
   if (process.env.BLOG20_USE_CHROME === "0") return false;
   return (
@@ -132,6 +140,32 @@ async function launchBotContext({ headedOverride, useChromeChannel } = {}) {
     headed,
     useChromeChannel,
   });
+  if (shouldUseSessionJson()) {
+    logStep("Using MailerLite session JSON (Linux — Windows browser profile cookies do not transfer)");
+    const browser = await chromium.launch({
+      headless: !headed,
+      timeout: 30000,
+      args: BROWSER_ARGS,
+    });
+    const context = await browser.newContext({
+      viewport: { width: 1366, height: 900 },
+      userAgent: BOT_USER_AGENT,
+      locale: "en-US",
+      timezoneId: "America/New_York",
+      storageState: SESSION_FILE,
+    });
+    const page = await context.newPage();
+    return {
+      context,
+      page,
+      headed,
+      close: async () => {
+        await context.close().catch(() => {});
+        await browser.close().catch(() => {});
+      },
+    };
+  }
+
   if (useChrome) {
     logStep(
       `Using installed ${options.channel} (better Cloudflare/Turnstile than bundled Chromium)`,
@@ -460,12 +494,12 @@ async function ensureMailerLiteSession(page, creds) {
         ? "Trying saved MailerLite login (browser profile)"
         : "Trying saved MailerLite session (JSON)",
     );
-    const blogUrl = `https://dashboard.mailerlite.com/sites/${creds.siteId}/blog/posts`;
+    const blogUrls = buildBlogUrls(creds.siteId);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         if (page.url().includes("accounts.mailerlite.com") || attempt > 1) {
           logStep(`Opening blog directly (attempt ${attempt})`);
-          await gotoPage(page, blogUrl, "blog (session)");
+          await gotoPage(page, blogUrls[0], "blog (session)");
           await page.waitForTimeout(2500);
         }
         await openBlogList(page, creds.siteId);
@@ -1196,4 +1230,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-j";
+export const BOT_RUNTIME_VERSION = "2026-09-29-k";
