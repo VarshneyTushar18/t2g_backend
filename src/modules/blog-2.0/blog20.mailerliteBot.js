@@ -854,26 +854,93 @@ async function isBlogEditorOpen(page) {
   return false;
 }
 
-async function findBestContentEditable(page) {
+async function isBodyPlaceholderVisible(page) {
+  return page
+    .getByText(/start writing your text|start writing|start typing/i)
+    .last()
+    .isVisible({ timeout: 800 })
+    .catch(() => false);
+}
+
+async function clickMailerLiteBodyPlaceholder(page) {
+  const patterns = [
+    /start writing your text/i,
+    /start writing/i,
+    /start typing/i,
+    /click to edit/i,
+    /write something/i,
+  ];
+  for (const pattern of patterns) {
+    const placeholder = page.getByText(pattern).last();
+    if (!(await placeholder.isVisible({ timeout: 2000 }).catch(() => false))) continue;
+    logStep(`Activating MailerLite body block (${pattern})`);
+    await placeholder.scrollIntoViewIfNeeded().catch(() => {});
+    await placeholder.click({ timeout: 10000 });
+    await page.waitForTimeout(1200);
+    return true;
+  }
+  return false;
+}
+
+async function findBestContentEditable(page, { excludeTitle = "" } = {}) {
+  const titleSnippet = String(excludeTitle).trim().slice(0, 80).toLowerCase();
+  const candidates = [];
   const roots = [page, ...page.frames().filter((f) => f !== page.mainFrame())];
-  let best = null;
-  let bestArea = 0;
+
   for (const root of roots) {
     const editables = root.locator('[contenteditable="true"]');
     const count = await editables.count().catch(() => 0);
     for (let i = 0; i < count; i += 1) {
       const loc = editables.nth(i);
       if (!(await loc.isVisible({ timeout: 400 }).catch(() => false))) continue;
-      const box = await loc.boundingBox().catch(() => null);
-      if (!box || box.width < 120 || box.height < 20 || box.top < 60) continue;
-      const area = box.width * box.height;
-      if (area > bestArea) {
-        bestArea = area;
-        best = { root, loc };
-      }
+      const meta = await loc
+        .evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          return {
+            tag: el.tagName,
+            text: (el.textContent || el.innerText || "").trim().toLowerCase(),
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+          };
+        })
+        .catch(() => null);
+      if (!meta || meta.width < 120 || meta.height < 16 || meta.top < 60) continue;
+      if (meta.tag === "H1") continue;
+      if (titleSnippet && meta.text === titleSnippet) continue;
+      if (titleSnippet && meta.text.includes(titleSnippet) && meta.height < 120) continue;
+      candidates.push({
+        loc,
+        top: meta.top,
+        area: meta.width * meta.height,
+        text: meta.text,
+      });
     }
   }
-  return best;
+
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => a.top - b.top);
+  if (candidates.length > 1 && titleSnippet) {
+    const first = candidates[0];
+    if (first.text.includes(titleSnippet) || first.top < 220) {
+      candidates.shift();
+    }
+  }
+
+  candidates.sort((a, b) => b.area - a.area);
+  return { loc: candidates[0].loc };
+}
+
+async function findFocusedContentEditable(page) {
+  const roots = [page, ...page.frames().filter((f) => f !== page.mainFrame())];
+  for (const root of roots) {
+    const focused = root.locator('[contenteditable="true"]:focus').first();
+    if (await focused.isVisible({ timeout: 800 }).catch(() => false)) {
+      return { loc: focused };
+    }
+  }
+  return null;
 }
 
 async function readEditableLength(loc) {
@@ -939,7 +1006,7 @@ async function addBlockFromSidebar(page, blockPattern) {
   return true;
 }
 
-async function fillMailerLiteBlockEditor(page, html, plainBody) {
+async function fillMailerLiteBlockEditor(page, html, plainBody, draftTitle = "") {
   const text = plainBody || htmlToPlainText(html);
   if (!text) return false;
 
@@ -947,42 +1014,57 @@ async function fillMailerLiteBlockEditor(page, html, plainBody) {
   await dismissOverlays(page);
   await page.waitForTimeout(1500);
 
-  let target = await findBestContentEditable(page);
-  if (!target) {
-    const placeholder = page
-      .getByText(/click to edit|start typing|add content|type here|write something/i)
-      .first();
-    if (await placeholder.isVisible({ timeout: 2500 }).catch(() => false)) {
-      await placeholder.click({ timeout: 10000 });
-      await page.waitForTimeout(1000);
-      target = await findBestContentEditable(page);
-    }
+  await clickMailerLiteBodyPlaceholder(page);
+
+  const value = text.slice(0, 50000);
+  const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
+  await page.keyboard.press(selectAll).catch(() => {});
+  await page.keyboard.insertText(value);
+  await page.waitForTimeout(1200);
+
+  if (!(await isBodyPlaceholderVisible(page))) {
+    logStep("MailerLite block editor body filled via placeholder");
+    return true;
   }
+
+  let target =
+    (await findFocusedContentEditable(page)) ||
+    (await findBestContentEditable(page, { excludeTitle: draftTitle }));
 
   if (!target) {
     for (const pattern of [/custom html/i, /^html$/i, /rich text/i, /^text$/i, /paragraph/i]) {
       if (await addBlockFromSidebar(page, pattern)) {
-        target = await findBestContentEditable(page);
+        target =
+          (await findFocusedContentEditable(page)) ||
+          (await findBestContentEditable(page, { excludeTitle: draftTitle }));
         if (target) break;
       }
     }
   }
 
   if (!target) {
-    const canvas = page
-      .locator('[class*="canvas"], [class*="builder"], [class*="content-block"]')
-      .first();
-    if (await canvas.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await canvas.click({ timeout: 10000, position: { x: 240, y: 280 } }).catch(() => {});
-      await page.waitForTimeout(1000);
-      target = await findBestContentEditable(page);
+    const bodyBlock = draftTitle
+      ? page.locator('[contenteditable="true"]').filter({ hasNotText: draftTitle }).last()
+      : page.locator('[contenteditable="true"]').last();
+    if (await bodyBlock.isVisible({ timeout: 2000 }).catch(() => false)) {
+      target = { loc: bodyBlock };
     }
   }
 
-  if (!target) return false;
+  if (!target) {
+    await clickMailerLiteBodyPlaceholder(page);
+    await page.keyboard.insertText(value);
+    await page.waitForTimeout(1000);
+    if (!(await isBodyPlaceholderVisible(page))) {
+      logStep("MailerLite block editor body filled on second placeholder attempt");
+      return true;
+    }
+    return false;
+  }
+
   try {
-    const inserted = await insertIntoEditable(page, target, text);
-    if (inserted) {
+    const inserted = await insertIntoEditable(page, target, value);
+    if (inserted && !(await isBodyPlaceholderVisible(page))) {
       logStep("MailerLite block editor body filled");
       return true;
     }
@@ -994,11 +1076,11 @@ async function fillMailerLiteBlockEditor(page, html, plainBody) {
   }
 }
 
-async function fillMailerLiteBody(page, html) {
+async function fillMailerLiteBody(page, html, draftTitle = "") {
   const plainBody = htmlToPlainText(html.replace(/<h1[^>]*>.*?<\/h1>/i, ""));
   const blockEditor = await isMailerLiteBlockEditorOpen(page);
   if (blockEditor) {
-    return fillMailerLiteBlockEditor(page, html, plainBody);
+    return fillMailerLiteBlockEditor(page, html, plainBody, draftTitle);
   }
 
   const codeBtn = page.locator('button:has-text("HTML"), button:has-text("Code")').first();
@@ -1007,7 +1089,7 @@ async function fillMailerLiteBody(page, html) {
     await page.waitForTimeout(800);
   }
 
-  const target = await findBestContentEditable(page);
+  const target = await findBestContentEditable(page, { excludeTitle: draftTitle });
   if (target) {
     try {
       return await insertIntoEditable(page, target, plainBody);
@@ -1457,7 +1539,7 @@ async function createBlogDraft(page, draft, siteId) {
   await page.waitForTimeout(3000);
 
   const html = String(draft.content || "").trim();
-  const filled = await fillMailerLiteBody(page, html);
+  const filled = await fillMailerLiteBody(page, html, draft.title);
   if (!filled) {
     logStep(
       "Could not auto-fill body in MailerLite editor — will still save title-only draft",
@@ -1856,4 +1938,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-w";
+export const BOT_RUNTIME_VERSION = "2026-09-29-x";
