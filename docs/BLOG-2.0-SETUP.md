@@ -48,6 +48,12 @@ MailerLite has no blog API. The bot uses **Playwright** + a **saved session** (C
 3. **Human** reviews and clicks **Publish** in MailerLite
 4. When session expires (weeks later): run `xvfb-run -a npm run blog20:save-session` once on server
 
+**Important:** Always run push with `xvfb-run` on the server (saved session does not work in plain headless mode):
+
+```bash
+xvfb-run -a npm run test:blog20-push -- <draftId>
+```
+
 | Step | Automatic? |
 |------|----------------|
 | AI writes blog | Yes |

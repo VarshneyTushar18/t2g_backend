@@ -41,7 +41,7 @@ async function main() {
   await context.storageState({ path: SESSION_FILE });
   await browser.close();
   console.log(`\nSaved session to ${SESSION_FILE}`);
-  console.log("Now run: npm run test:blog20-push -- 16");
+  console.log("Now run: xvfb-run -a npm run test:blog20-push -- 16");
 }
 
 main().catch((err) => {

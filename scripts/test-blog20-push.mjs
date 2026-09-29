@@ -16,6 +16,12 @@ async function main() {
   console.log(`[blog-2.0] Bot runtime: ${BOT_RUNTIME_VERSION}`);
   console.log(`[blog-2.0] Pushing draft #${draftId} to MailerLite…`);
   console.log("[blog-2.0] This takes 2-5 minutes. Do not press Ctrl+C.");
+  if (!process.env.DISPLAY && process.platform === "linux") {
+    console.log(
+      "[blog-2.0] Tip: saved session needs xvfb — run: xvfb-run -a npm run test:blog20-push --",
+      draftId,
+    );
+  }
   const result = await pushDraftToMailerLite(draftId);
   if (typeof result === "function") {
     throw new Error(

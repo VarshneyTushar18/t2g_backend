@@ -50,9 +50,22 @@ async function withBotTimeout(fn, label) {
   }
 }
 
+function useHeadedBrowser() {
+  return (
+    process.env.BLOG_20_BOT_HEADED === "1" ||
+    Boolean(process.env.DISPLAY)
+  );
+}
+
 async function launchBrowser() {
+  const headed = useHeadedBrowser();
+  if (!headed && fs.existsSync(SESSION_FILE)) {
+    logStep(
+      "No DISPLAY — saved session needs a headed browser. Use: xvfb-run -a npm run test:blog20-push -- <draftId>",
+    );
+  }
   return chromium.launch({
-    headless: true,
+    headless: !headed,
     timeout: 30000,
     args: [
       "--no-sandbox",
@@ -260,19 +273,22 @@ async function waitForDashboard(page, timeoutMs = 90000) {
 async function ensureMailerLiteSession(page, creds) {
   if (fs.existsSync(SESSION_FILE)) {
     logStep("Trying saved MailerLite session");
-    await gotoPage(
-      page,
-      `https://dashboard.mailerlite.com/sites/${creds.siteId}/blog/posts`,
-      "blog (session)",
-    );
-    if (
-      isOnDashboard(page) &&
-      (await findCreatePostButton(page, { timeout: 10000, click: false }))
-    ) {
+    try {
+      await openBlogList(page, creds.siteId);
       logStep("Saved session is valid");
       return;
+    } catch (err) {
+      await captureDebug(page, "session-invalid");
+      const refresh = "xvfb-run -a npm run blog20:save-session";
+      const pushHint = "xvfb-run -a npm run test:blog20-push -- <draftId>";
+      const err2 = new Error(
+        `Saved MailerLite session could not open the blog (at ${page.url()}). ` +
+          `Do not use headless login — refresh session: ${refresh}. ` +
+          `Then push with: ${pushHint}`,
+      );
+      err2.status = 401;
+      throw err2;
     }
-    logStep("Saved session expired — logging in again");
   }
   await loginIfNeeded(page, creds);
   await waitForDashboard(page);
@@ -306,10 +322,6 @@ async function loginIfNeeded(page, { email, password }) {
     const onApp =
       url.includes("dashboard.mailerlite.com") && !url.includes("login");
     if (onApp) return;
-  }
-
-  if (fs.existsSync(SESSION_FILE)) {
-    fs.unlinkSync(SESSION_FILE);
   }
 
   await gotoPage(page, "https://accounts.mailerlite.com/login", "login page");
@@ -686,4 +698,4 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-18-h";
+export const BOT_RUNTIME_VERSION = "2026-09-29-a";
