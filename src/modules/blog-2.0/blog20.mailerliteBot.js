@@ -16,8 +16,97 @@ const BOT_TIMEOUT_MS =
 
 let botBusy = false;
 
+const PUSH_PHASES = [
+  { id: 1, label: "Starting" },
+  { id: 2, label: "Checking session" },
+  { id: 3, label: "Opening blog" },
+  { id: 4, label: "Creating post" },
+  { id: 5, label: "Opening editor" },
+  { id: 6, label: "Filling content" },
+  { id: 7, label: "Saving draft" },
+];
+
+/** @type {null | { draft_id: number, draft_title: string, step: number, total_steps: number, label: string, message: string, phase: string, started_at: string, updated_at: string }} */
+let currentBotJob = null;
+
+function persistJobStep(message) {
+  const draftId = currentBotJob?.draft_id;
+  if (!draftId) return;
+  draftsModel
+    .updateDraftPushStatus(draftId, { mailerlite_push_step: message })
+    .catch(() => {});
+}
+
+function startBotJob(draft) {
+  currentBotJob = {
+    draft_id: Number(draft.id),
+    draft_title: draft.title,
+    step: 1,
+    total_steps: PUSH_PHASES.length,
+    label: PUSH_PHASES[0].label,
+    message: "Starting MailerLite push",
+    phase: "running",
+    started_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  persistJobStep(currentBotJob.message);
+}
+
+function setBotJobPhase(phaseId, message) {
+  if (!currentBotJob || currentBotJob.phase !== "running") return;
+  const phase = PUSH_PHASES.find((p) => p.id === phaseId) || PUSH_PHASES[0];
+  currentBotJob.step = phaseId;
+  currentBotJob.label = phase.label;
+  currentBotJob.message = message || phase.label;
+  currentBotJob.updated_at = new Date().toISOString();
+  persistJobStep(currentBotJob.message);
+}
+
+function finishBotJob({ ok = true, error = null } = {}) {
+  if (!currentBotJob) return;
+  currentBotJob.phase = ok ? "done" : "failed";
+  currentBotJob.step = ok ? PUSH_PHASES.length : currentBotJob.step;
+  currentBotJob.label = ok ? "Complete" : "Failed";
+  currentBotJob.message = ok
+    ? "Push completed successfully"
+    : String(error || "Push failed");
+  currentBotJob.updated_at = new Date().toISOString();
+  persistJobStep(ok ? "Push completed" : currentBotJob.message);
+  const jobRef = currentBotJob;
+  setTimeout(() => {
+    if (currentBotJob === jobRef) currentBotJob = null;
+  }, 60000);
+}
+
+export function getBotJobSnapshot() {
+  if (!currentBotJob) return null;
+  const total = currentBotJob.total_steps || PUSH_PHASES.length;
+  const step = Math.min(Math.max(currentBotJob.step || 1, 1), total);
+  const percent =
+    currentBotJob.phase === "done"
+      ? 100
+      : Math.min(99, Math.round(((step - 0.5) / total) * 100));
+  return {
+    draft_id: currentBotJob.draft_id,
+    draft_title: currentBotJob.draft_title,
+    step,
+    total_steps: total,
+    percent,
+    label: currentBotJob.label,
+    message: currentBotJob.message,
+    phase: currentBotJob.phase,
+    started_at: currentBotJob.started_at,
+    updated_at: currentBotJob.updated_at,
+  };
+}
+
 function logStep(message) {
   console.log(`[blog-2.0-bot] ${message}`);
+  if (currentBotJob?.phase === "running") {
+    currentBotJob.message = message;
+    currentBotJob.updated_at = new Date().toISOString();
+    persistJobStep(message);
+  }
 }
 
 async function withBotLock(fn) {
@@ -1823,6 +1912,7 @@ async function tryOpenPostEditorByUrl(page, siteId) {
 }
 
 async function createBlogDraft(page, draft, siteId, creds = null) {
+  setBotJobPhase(4, `Creating post: ${draft.title.slice(0, 60)}`);
   logStep(`Creating MailerLite post: ${draft.title.slice(0, 80)}`);
   await dismissOverlays(page);
   await openBlogList(page, siteId, creds);
@@ -1891,6 +1981,7 @@ async function createBlogDraft(page, draft, siteId, creds = null) {
 
   await tryOpenPostEditorByUrl(page, siteId);
 
+  setBotJobPhase(5, "Opening MailerLite content editor");
   logStep("Opening MailerLite content editor");
   const openedEditor = await openBlogContentEditor(page, draft.title);
   if (!openedEditor) {
@@ -1913,6 +2004,7 @@ async function createBlogDraft(page, draft, siteId, creds = null) {
   }
   await page.waitForTimeout(3000);
 
+  setBotJobPhase(6, "Filling blog content in editor");
   const html = String(draft.content || "").trim();
   let filled = false;
   try {
@@ -1931,6 +2023,7 @@ async function createBlogDraft(page, draft, siteId, creds = null) {
   await page.keyboard.press("Escape").catch(() => {});
   await page.waitForTimeout(2000);
 
+  setBotJobPhase(7, "Saving post as draft in MailerLite");
   logStep("Saving post as draft in MailerLite editor");
   const saved = await saveMailerLiteContentDraft(page);
   if (!saved) {
@@ -2024,21 +2117,26 @@ export async function pushDraftToMailerLite(draftId) {
         throw err;
       }
 
+      startBotJob(draft);
+
       const creds = await getBotCredentials();
       ensureDirs();
 
       await draftsModel.updateDraftPushStatus(draftId, {
         mailerlite_push_status: "processing",
         mailerlite_push_error: null,
+        mailerlite_push_step: "Starting MailerLite push",
       });
 
       const { context, page } = await launchBotContext();
 
       try {
         context.setDefaultTimeout(60000);
+        setBotJobPhase(2, "Ensuring MailerLite session");
         logStep("Ensuring MailerLite session");
         await ensureMailerLiteSession(page, creds);
         if (!page.url().includes("/blog")) {
+          setBotJobPhase(3, "Opening MailerLite blog list");
           logStep("Opening MailerLite blog list");
           await openBlogList(page, creds.siteId);
         }
@@ -2047,14 +2145,18 @@ export async function pushDraftToMailerLite(draftId) {
         await persistLoginBackup(context);
         await settingsModel.clearMailerLiteSessionAlert();
 
+        finishBotJob({ ok: true });
+
         await draftsModel.updateDraftPushStatus(draftId, {
           mailerlite_push_status: "pushed",
           mailerlite_pushed_at: new Date(),
           mailerlite_push_error: null,
+          mailerlite_push_step: "Push completed",
         });
 
         return { draftId, ...result };
       } catch (err) {
+        finishBotJob({ ok: false, error: err.message });
         await settingsModel.setBotWaitingOtp(false).catch(() => {});
         if (err?.status === 401 && err?.sessionStatus !== "awaiting_otp") {
           await markMailerLiteSessionNeeded(page, err).catch(() => {});
@@ -2062,6 +2164,7 @@ export async function pushDraftToMailerLite(draftId) {
         await draftsModel.updateDraftPushStatus(draftId, {
           mailerlite_push_status: "failed",
           mailerlite_push_error: err.message,
+          mailerlite_push_step: err.message,
         });
         throw err;
       } finally {
@@ -2325,6 +2428,7 @@ export function isMailerLiteBotBusy() {
 
 export async function getMailerLiteBotStatus() {
   const settings = await settingsModel.getSettings();
+  const job = getBotJobSnapshot();
   return {
     ok: true,
     bot_busy: botBusy,
@@ -2332,6 +2436,8 @@ export async function getMailerLiteBotStatus() {
     session_status: settings.mailerlite_session_status || "ok",
     session_message: settings.mailerlite_session_message || "",
     runtime_version: BOT_RUNTIME_VERSION,
+    job,
+    phases: PUSH_PHASES.map((p) => p.label),
   };
 }
 

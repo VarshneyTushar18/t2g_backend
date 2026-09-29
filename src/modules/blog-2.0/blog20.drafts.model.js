@@ -45,6 +45,10 @@ export async function ensureBlog20DraftsTable() {
       col: "mailerlite_push_error",
       sql: "ALTER TABLE blog_2_0_drafts ADD COLUMN mailerlite_push_error TEXT NULL AFTER mailerlite_pushed_at",
     },
+    {
+      col: "mailerlite_push_step",
+      sql: "ALTER TABLE blog_2_0_drafts ADD COLUMN mailerlite_push_step VARCHAR(500) NULL AFTER mailerlite_push_error",
+    },
   ];
   const [cols] = await blogDb.query(
     `SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -71,6 +75,7 @@ function mapDraft(row) {
     mailerlite_push_status: row.mailerlite_push_status || "idle",
     mailerlite_pushed_at: row.mailerlite_pushed_at || null,
     mailerlite_push_error: row.mailerlite_push_error || null,
+    mailerlite_push_step: row.mailerlite_push_step || null,
     client_blog_url: null,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -147,6 +152,7 @@ export async function listDrafts({ limit = 20 } = {}) {
   const [rows] = await blogDb.query(
     `SELECT id, title, slug, excerpt, status, featured_image, author_name,
             mailerlite_push_status, mailerlite_pushed_at, mailerlite_push_error,
+            mailerlite_push_step,
             created_at, updated_at
      FROM blog_2_0_drafts
      ORDER BY created_at DESC
