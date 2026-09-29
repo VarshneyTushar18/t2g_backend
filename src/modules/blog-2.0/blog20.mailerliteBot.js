@@ -757,10 +757,21 @@ function logSetupStep(step, extra = "") {
   console.log(`[blog-2.0-setup] Step ${step.id}/7: ${step.label}${suffix}`);
 }
 
+async function hasVisibleLoginForm(page) {
+  return page
+    .locator('input[type="password"], input[data-test-id="password-input"]')
+    .first()
+    .isVisible({ timeout: 800 })
+    .catch(() => false);
+}
+
 async function detectSetupStep(page, siteId) {
   const url = page.url();
   if (url.includes("/login")) return "login";
-  if (url.includes("accounts.mailerlite.com")) return "accounts";
+  if (url.includes("accounts.mailerlite.com")) {
+    if (await hasVisibleLoginForm(page)) return "login";
+    return "accounts";
+  }
   if (url.includes("dashboard.mailerlite.com") && url.includes(`/sites/${siteId}/blog`)) {
     const hasCreate = await findCreatePostButton(page, { timeout: 1500, click: false });
     if (hasCreate) return "ready";
@@ -768,6 +779,13 @@ async function detectSetupStep(page, siteId) {
   }
   if (url.includes("dashboard.mailerlite.com")) return "dashboard";
   return null;
+}
+
+async function autoOpenBlogFromAccounts(page, siteId) {
+  const blogUrl = `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`;
+  logStep("Auto-opening blog URL (accounts portal does not redirect automatically)");
+  await gotoPage(page, blogUrl, "auto-open blog");
+  await tryOpenDashboardFromAccounts(page).catch(() => {});
 }
 
 /**
@@ -779,25 +797,56 @@ export async function watchMailerLiteSetupProgress(page, siteId, { timeoutMs = 1
   logSetupStep(SETUP_STEPS[0], page.url());
 
   let lastHintAt = 0;
+  let lastAutoNavAt = 0;
+  let lastScreenshotAt = 0;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    const url = page.url();
     const current = await detectSetupStep(page, siteId);
+
+    // Stuck on accounts after login — MailerLite often does not auto-redirect
+    if (
+      url.includes("accounts.mailerlite.com") &&
+      !(await hasVisibleLoginForm(page)) &&
+      Date.now() - lastAutoNavAt > 8000
+    ) {
+      lastAutoNavAt = Date.now();
+      await autoOpenBlogFromAccounts(page, siteId);
+    }
+
     if (current && !seen.has(current)) {
       seen.add(current);
       const step = SETUP_STEPS.find((s) => s.key === current);
       if (step) logSetupStep(step, page.url());
-      if (current === "accounts") {
+      if (current === "login") {
         console.log(
-          "[blog-2.0-setup] → Now open: Sites → Tech2globe → Blog → Posts (or wait for redirect)",
+          "[blog-2.0-setup] Login form visible — enter email & password IN THE SERVER BROWSER (not your PC browser).",
         );
       }
       if (current === "ready") return { ok: true, steps: [...seen] };
     } else if (Date.now() - lastHintAt > 30000 && !seen.has("ready")) {
       lastHintAt = Date.now();
-      console.log(
-        `[blog-2.0-setup] Still waiting… current page: ${page.url()} — go to Blog → Posts, do NOT press Enter yet`,
-      );
+      const onLogin = await hasVisibleLoginForm(page);
+      if (onLogin) {
+        console.log(
+          "[blog-2.0-setup] Still on LOGIN page — you must log in inside the server browser (see note below).",
+        );
+      } else {
+        console.log(
+          `[blog-2.0-setup] Still waiting… ${page.url()} — auto-opening blog URL…`,
+        );
+        await autoOpenBlogFromAccounts(page, siteId);
+      }
     }
+
+    if (Date.now() - lastScreenshotAt > 60000) {
+      lastScreenshotAt = Date.now();
+      const shot = await captureDebug(page, "setup-progress");
+      if (shot?.screenshot) {
+        console.log(`[blog-2.0-setup] Debug screenshot: ${shot.screenshot}`);
+      }
+    }
+
     await page.waitForTimeout(1200);
   }
 
@@ -824,11 +873,27 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
     console.log("\n[blog-2.0-setup] Follow along in the browser. Steps will print below:\n");
     console.log(`[blog-2.0-setup] Browser profile: ${PROFILE_DIR}\n`);
 
+    if (process.platform === "linux" && Boolean(process.env.DISPLAY)) {
+      console.log(
+        "╔══════════════════════════════════════════════════════════════════╗\n" +
+          "║  SSH + xvfb: the browser is INVISIBLE — not on your PC screen!   ║\n" +
+          "║  Logging into MailerLite on your laptop does NOT help.           ║\n" +
+          "║                                                                  ║\n" +
+          "║  EASIER: run save-session on your Windows PC instead:            ║\n" +
+          "║    cd t2g_backend && npm run blog20:save-session                 ║\n" +
+          "║  Then copy folder to server:                                     ║\n" +
+          "║    storage/blog-2.0/browser-profile                              ║\n" +
+          "╚══════════════════════════════════════════════════════════════════╝\n",
+      );
+    } else {
+      console.log("[blog-2.0-setup] A browser window should open on this PC — log in there.\n");
+    }
+
     await gotoPage(page, blogUrl, "blog (save session)");
 
     console.log(
-      "\n[blog-2.0-setup] Log in → go to Sites → Tech2globe → Blog → Posts.\n" +
-        "[blog-2.0-setup] Wait for Step 6/7 — do NOT press Enter or Ctrl+C until auto-save.\n",
+      "[blog-2.0-setup] Wait for Step 6/7 — script auto-opens blog URL after login.\n" +
+        "[blog-2.0-setup] Do NOT press Enter or Ctrl+C until auto-save.\n",
     );
 
     if (autoWatch) {
@@ -848,4 +913,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-e";
+export const BOT_RUNTIME_VERSION = "2026-09-29-f";

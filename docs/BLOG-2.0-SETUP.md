@@ -60,6 +60,29 @@ Step 6/7: Create a post visible — session auto-saves
 Step 7/7: Session saved
 ```
 
+### Save login on Windows PC (recommended — server browser is invisible over SSH)
+
+On your **Windows PC** (not SSH):
+
+```bash
+cd t2g_backend
+npm run blog20:save-session
+```
+
+A real browser opens → log in → wait for Step 6/7.
+
+Copy profile to server:
+
+```bash
+scp -r storage/blog-2.0/browser-profile root@YOUR_SERVER:/root/t2g_backend/storage/blog-2.0/
+```
+
+Then on server:
+
+```bash
+xvfb-run -a npm run test:blog20-push -- 16
+```
+
 **Important:** Always run push with `xvfb-run` on the server (saved session does not work in plain headless mode):
 
 ```bash
