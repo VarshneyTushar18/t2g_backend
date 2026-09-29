@@ -19,6 +19,8 @@ const DEFAULTS = {
   mailerlite_site_id: "196949098888169226",
   mailerlite_bot_enabled: false,
   mailerlite_bot_auto_push: false,
+  mailerlite_session_status: "ok",
+  mailerlite_session_message: "",
   has_mailerlite_login: false,
   approval_emails: [],
   teams_webhook_url: "",
@@ -88,6 +90,9 @@ function mapRow(row) {
     mailerlite_site_id: row.mailerlite_site_id || DEFAULTS.mailerlite_site_id,
     mailerlite_bot_enabled: Boolean(row.mailerlite_bot_enabled),
     mailerlite_bot_auto_push: Boolean(row.mailerlite_bot_auto_push),
+    mailerlite_session_status: row.mailerlite_session_status || "ok",
+    mailerlite_session_message: row.mailerlite_session_message || "",
+    mailerlite_session_needed_at: row.mailerlite_session_needed_at || null,
     has_mailerlite_login: Boolean(row.mailerlite_login_email_enc && row.mailerlite_login_password_enc),
     mailerlite_login_email_hint: null,
     approval_emails: parseJsonArray(row.approval_emails, []),
@@ -167,6 +172,18 @@ export async function ensureBlog20Tables() {
     {
       col: "mailerlite_login_password_enc",
       sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_login_password_enc TEXT NULL AFTER mailerlite_login_email_enc",
+    },
+    {
+      col: "mailerlite_session_status",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_session_status ENUM('ok','needed','awaiting_otp') NOT NULL DEFAULT 'ok' AFTER mailerlite_bot_auto_push",
+    },
+    {
+      col: "mailerlite_session_message",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_session_message TEXT NULL AFTER mailerlite_session_status",
+    },
+    {
+      col: "mailerlite_session_needed_at",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_session_needed_at TIMESTAMP NULL AFTER mailerlite_session_message",
     },
   ];
   const [cols] = await blogDb.query(
@@ -378,6 +395,32 @@ export async function upsertSettings(payload, updatedBy = null) {
   );
 
   return getSettings();
+}
+
+export async function setMailerLiteSessionAlert({
+  status = "needed",
+  message = "MailerLite browser session needs to be refreshed.",
+} = {}) {
+  const allowed = new Set(["needed", "awaiting_otp"]);
+  const nextStatus = allowed.has(status) ? status : "needed";
+  await blogDb.query(
+    `UPDATE blog_2_0_settings
+     SET mailerlite_session_status = ?,
+         mailerlite_session_message = ?,
+         mailerlite_session_needed_at = CURRENT_TIMESTAMP
+     WHERE id = 1`,
+    [nextStatus, String(message || "").slice(0, 2000)],
+  );
+}
+
+export async function clearMailerLiteSessionAlert() {
+  await blogDb.query(
+    `UPDATE blog_2_0_settings
+     SET mailerlite_session_status = 'ok',
+         mailerlite_session_message = NULL,
+         mailerlite_session_needed_at = NULL
+     WHERE id = 1`,
+  );
 }
 
 export function buildSetupChecklist(settings) {

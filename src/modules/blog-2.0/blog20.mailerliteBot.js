@@ -521,31 +521,35 @@ async function ensureMailerLiteSession(page, creds) {
     const blogUrls = buildBlogUrls(creds.siteId);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
+        await assertMailerLiteSessionUsable(page);
         if (page.url().includes("accounts.mailerlite.com") || attempt > 1) {
           logStep(`Opening blog directly (attempt ${attempt})`);
           await gotoPage(page, blogUrls[0], "blog (session)");
           await page.waitForTimeout(2500);
         }
+        await assertMailerLiteSessionUsable(page);
         await openBlogList(page, creds.siteId);
+        await settingsModel.clearMailerLiteSessionAlert();
         logStep("Saved session is valid");
         return;
-      } catch {
+      } catch (err) {
+        if (err?.status === 401) throw err;
         if (attempt < 3) {
           logStep("Session not on blog yet — retrying dashboard navigation");
           await gotoPage(page, "https://dashboard.mailerlite.com/", "dashboard");
           await page.waitForTimeout(2000);
+          await assertMailerLiteSessionUsable(page);
         }
       }
     }
     await captureDebug(page, "session-invalid");
-    const refresh = "xvfb-run -a npm run blog20:save-session";
-    const pushHint = "xvfb-run -a npm run test:blog20-push -- <draftId>";
     const err2 = new Error(
       `Saved MailerLite session could not open the blog (at ${page.url()}). ` +
-        `Re-save session (wait until you see Create a post): ${refresh}. ` +
-        `Then push: ${pushHint}`,
+        "Open Blog-2.0 → MailerLite in admin — session refresh steps are shown there.",
     );
     err2.status = 401;
+    err2.sessionStatus = "needed";
+    await markMailerLiteSessionNeeded(page, err2);
     throw err2;
   }
   await loginIfNeeded(page, creds);
@@ -611,9 +615,72 @@ async function loginIfNeeded(page, { email, password }) {
 function buildBlogUrls(siteId) {
   return [
     `https://dashboard.mailerlite.com/sites/${siteId}/blog`,
-    `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`,
     `https://dashboard.mailerlite.com/sites/${siteId}`,
   ];
+}
+
+async function getMailerLiteSessionBlockReason(page) {
+  if (await isMailerLiteVerificationPage(page)) {
+    const err = new Error(
+      "MailerLite session needs email OTP. Open Blog-2.0 → MailerLite in admin for steps. " +
+        "On Windows: npm run blog20:save-session → enter OTP → scp mailerlite-session.json to server.",
+    );
+    err.status = 401;
+    err.sessionStatus = "awaiting_otp";
+    return err;
+  }
+  const url = page.url();
+  if (url.includes("/login") || (await hasVisibleLoginForm(page))) {
+    const err = new Error(
+      "MailerLite browser session expired. Open Blog-2.0 → MailerLite in admin for steps. " +
+        "On Windows: npm run blog20:save-session → scp mailerlite-session.json to server.",
+    );
+    err.status = 401;
+    err.sessionStatus = "needed";
+    return err;
+  }
+  return null;
+}
+
+async function notifyMailerLiteSessionNeeded(message) {
+  try {
+    const settings = await settingsModel.getSettings();
+    const url = String(settings.teams_webhook_url || "").trim();
+    if (!url) return;
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text:
+          `Blog-2.0 — MailerLite session action required\n\n${message}\n\n` +
+          "Admin: Blog-2.0 → MailerLite",
+      }),
+    });
+  } catch {
+    /* optional notification */
+  }
+}
+
+async function markMailerLiteSessionNeeded(page, err) {
+  const isOtp = err?.sessionStatus === "awaiting_otp" || (await isMailerLiteVerificationPage(page));
+  const status = isOtp ? "awaiting_otp" : "needed";
+  const message =
+    err?.message ||
+    (isOtp
+      ? "MailerLite email OTP is required. Refresh session on Windows (npm run blog20:save-session), then copy mailerlite-session.json to the server."
+      : "MailerLite browser session expired. Refresh session on Windows, then copy mailerlite-session.json to the server.");
+  await settingsModel.setMailerLiteSessionAlert({ status, message });
+  await notifyMailerLiteSessionNeeded(message);
+  logStep(`Session alert set (${status})`);
+}
+
+async function assertMailerLiteSessionUsable(page) {
+  const blocked = await getMailerLiteSessionBlockReason(page);
+  if (blocked) {
+    await markMailerLiteSessionNeeded(page, blocked);
+    await captureDebug(page, "session-blocked");
+    throw blocked;
+  }
 }
 
 async function isMailerLite404Page(page) {
@@ -681,10 +748,12 @@ async function findCreatePostButton(page, { timeout = 60000, click = true } = {}
 }
 
 async function ensureBlogPostsPage(page, siteId) {
+  await assertMailerLiteSessionUsable(page);
   const urls = buildBlogUrls(siteId);
 
   for (const url of urls) {
     await gotoPage(page, url, "blog posts");
+    await assertMailerLiteSessionUsable(page);
     if (await isMailerLite404Page(page)) {
       logStep(`MailerLite 404 at ${url}`);
       continue;
@@ -717,10 +786,12 @@ async function ensureBlogPostsPage(page, siteId) {
   }
 
   await captureDebug(page, "blog-posts-page-missing");
+  const blocked = await getMailerLiteSessionBlockReason(page);
+  if (blocked) throw blocked;
   const err = new Error(
     `Could not open MailerLite blog posts page (current URL: ${page.url()}). ` +
-      `Site ID ${siteId} may be wrong, or this account has no website/blog yet. ` +
-      `In MailerLite go to Sites, open the client website, then Blog — copy the site ID from the URL.`,
+      `Session may be expired — re-save on Windows (npm run blog20:save-session) and scp mailerlite-session.json to server. ` +
+      `Site ID ${siteId} may also be wrong.`,
   );
   err.status = 500;
   throw err;
@@ -761,6 +832,38 @@ async function clickEnabledButton(page, labels) {
       return true;
     }
   }
+  return false;
+}
+
+async function saveMailerLiteContentDraft(page) {
+  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+  await page.waitForTimeout(500);
+
+  const draftSelectors = [
+    page.getByRole("button", { name: /save as draft/i }).first(),
+    page.locator('button').filter({ hasText: /save as draft/i }).first(),
+    page.locator('button').filter({ hasText: /^save draft$/i }).first(),
+  ];
+  for (const btn of draftSelectors) {
+    if (!(await btn.isVisible({ timeout: 2500 }).catch(() => false))) continue;
+    if (!(await btn.isEnabled().catch(() => false))) continue;
+    logStep("Clicking Save as draft");
+    await btn.click({ timeout: 10000 });
+    await page.waitForTimeout(2500);
+    return true;
+  }
+
+  if (await clickEnabledButton(page, ["Save as draft", "Save draft"])) {
+    return true;
+  }
+
+  const saveBtn = page.locator('button').filter({ hasText: /^save$/i }).first();
+  if (await saveBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await saveBtn.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(800);
+    return clickEnabledButton(page, ["Save as draft", "Save draft"]);
+  }
+
   return false;
 }
 
@@ -862,6 +965,38 @@ async function isBodyPlaceholderVisible(page) {
     .catch(() => false);
 }
 
+async function findMailerLiteBodyEditable(page, draftTitle = "") {
+  const titleSnippet = String(draftTitle).trim().slice(0, 80).toLowerCase();
+  const roots = [page, ...page.frames().filter((f) => f !== page.mainFrame())];
+
+  for (const root of roots) {
+    const editables = root.locator('[contenteditable="true"]');
+    const count = await editables.count().catch(() => 0);
+    for (let i = count - 1; i >= 0; i -= 1) {
+      const loc = editables.nth(i);
+      if (!(await loc.isVisible({ timeout: 500 }).catch(() => false))) continue;
+      const meta = await loc
+        .evaluate((el) => ({
+          tag: el.tagName,
+          text: (el.textContent || el.innerText || "").trim().toLowerCase(),
+          top: el.getBoundingClientRect().top,
+          height: el.getBoundingClientRect().height,
+        }))
+        .catch(() => null);
+      if (!meta || meta.tag === "H1" || meta.height < 12) continue;
+      if (titleSnippet && meta.text === titleSnippet) continue;
+      if (titleSnippet && meta.text.includes(titleSnippet) && meta.height < 100) continue;
+      if (/start writing|start typing|click to edit|write something/.test(meta.text)) {
+        return { loc };
+      }
+      if (meta.text.length < 24 && meta.top > 200) {
+        return { loc };
+      }
+    }
+  }
+  return null;
+}
+
 async function clickMailerLiteBodyPlaceholder(page) {
   const patterns = [
     /start writing your text/i,
@@ -870,16 +1005,39 @@ async function clickMailerLiteBodyPlaceholder(page) {
     /click to edit/i,
     /write something/i,
   ];
+
   for (const pattern of patterns) {
+    const inEditable = page
+      .locator('[contenteditable="true"]')
+      .filter({ hasText: pattern })
+      .last();
+    if (await inEditable.isVisible({ timeout: 1500 }).catch(() => false)) {
+      logStep(`Activating body contenteditable (${pattern})`);
+      await inEditable.scrollIntoViewIfNeeded().catch(() => {});
+      await inEditable.click({ timeout: 10000 });
+      await page.waitForTimeout(1200);
+      return true;
+    }
+
     const placeholder = page.getByText(pattern).last();
-    if (!(await placeholder.isVisible({ timeout: 2000 }).catch(() => false))) continue;
+    if (!(await placeholder.isVisible({ timeout: 1500 }).catch(() => false))) continue;
     logStep(`Activating MailerLite body block (${pattern})`);
     await placeholder.scrollIntoViewIfNeeded().catch(() => {});
     await placeholder.click({ timeout: 10000 });
+    await placeholder.dblclick({ timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(1200);
     return true;
   }
   return false;
+}
+
+function plainTextToEditorHtml(text) {
+  const chunks = String(text || "")
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (!chunks.length) return "";
+  return chunks.map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
 }
 
 async function findBestContentEditable(page, { excludeTitle = "" } = {}) {
@@ -956,7 +1114,35 @@ async function insertIntoEditable(page, target, text) {
 
   await loc.scrollIntoViewIfNeeded().catch(() => {});
   await loc.click({ timeout: 10000 });
-  const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
+  await page.waitForTimeout(400);
+
+  const htmlBody = plainTextToEditorHtml(value);
+  const viaDom = await loc
+    .evaluate((el, payload) => {
+      const { body, html } = payload;
+      el.focus();
+      if (el.isContentEditable) {
+        el.innerHTML = html || "";
+        if ((el.textContent || "").trim().length < 10) {
+          el.textContent = body;
+        }
+        try {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("insertText", false, body);
+        } catch {
+          /* ignore */
+        }
+      } else if ("value" in el) {
+        el.value = body;
+      } else {
+        return false;
+      }
+      el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return (el.textContent || el.innerText || el.value || "").trim().length > 10;
+    }, { body: value, html: htmlBody })
+    .catch(() => false);
+  if (viaDom) return true;
 
   try {
     await loc.fill(value);
@@ -965,24 +1151,16 @@ async function insertIntoEditable(page, target, text) {
     // fill() is not supported on every contenteditable implementation
   }
 
-  await loc.click({ timeout: 5000 }).catch(() => {});
-  await page.keyboard.press(selectAll);
-  await page.keyboard.insertText(value);
-  await page.waitForTimeout(500);
-  if ((await readEditableLength(loc)) > 20) return true;
+  const keyboard = page?.keyboard;
+  if (keyboard?.press) {
+    const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
+    await loc.click({ timeout: 5000 }).catch(() => {});
+    await keyboard.press(selectAll).catch(() => {});
+    await keyboard.insertText(value).catch(() => {});
+    await page.waitForTimeout(500);
+    if ((await readEditableLength(loc)) > 20) return true;
+  }
 
-  await loc.evaluate((el, body) => {
-    el.focus();
-    if (el.isContentEditable) {
-      el.innerHTML = "";
-      el.textContent = body;
-    } else if ("value" in el) {
-      el.value = body;
-    }
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  }, value);
-  await page.waitForTimeout(800);
   return (await readEditableLength(loc)) > 0;
 }
 
@@ -1010,65 +1188,61 @@ async function fillMailerLiteBlockEditor(page, html, plainBody, draftTitle = "")
   const text = plainBody || htmlToPlainText(html);
   if (!text) return false;
 
-  logStep("Filling MailerLite block editor body");
-  await dismissOverlays(page);
-  await page.waitForTimeout(1500);
+  try {
+    logStep("Filling MailerLite block editor body");
+    await dismissOverlays(page);
+    await page.waitForTimeout(1500);
 
-  await clickMailerLiteBodyPlaceholder(page);
+    await clickMailerLiteBodyPlaceholder(page);
+    const value = text.slice(0, 50000);
 
-  const value = text.slice(0, 50000);
-  const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
-  await page.keyboard.press(selectAll).catch(() => {});
-  await page.keyboard.insertText(value);
-  await page.waitForTimeout(1200);
+    let target =
+      (await findMailerLiteBodyEditable(page, draftTitle)) ||
+      (await findFocusedContentEditable(page)) ||
+      (await findBestContentEditable(page, { excludeTitle: draftTitle }));
 
-  if (!(await isBodyPlaceholderVisible(page))) {
-    logStep("MailerLite block editor body filled via placeholder");
-    return true;
-  }
-
-  let target =
-    (await findFocusedContentEditable(page)) ||
-    (await findBestContentEditable(page, { excludeTitle: draftTitle }));
-
-  if (!target) {
-    for (const pattern of [/custom html/i, /^html$/i, /rich text/i, /^text$/i, /paragraph/i]) {
-      if (await addBlockFromSidebar(page, pattern)) {
-        target =
-          (await findFocusedContentEditable(page)) ||
-          (await findBestContentEditable(page, { excludeTitle: draftTitle }));
-        if (target) break;
+    if (!target) {
+      const bodyBlock = draftTitle
+        ? page.locator('[contenteditable="true"]').filter({ hasNotText: draftTitle }).last()
+        : page.locator('[contenteditable="true"]').last();
+      if (await bodyBlock.isVisible({ timeout: 2000 }).catch(() => false)) {
+        target = { loc: bodyBlock };
       }
     }
-  }
 
-  if (!target) {
-    const bodyBlock = draftTitle
-      ? page.locator('[contenteditable="true"]').filter({ hasNotText: draftTitle }).last()
-      : page.locator('[contenteditable="true"]').last();
-    if (await bodyBlock.isVisible({ timeout: 2000 }).catch(() => false)) {
-      target = { loc: bodyBlock };
+    if (!target) {
+      for (const pattern of [/custom html/i, /^html$/i, /rich text/i, /^text$/i, /paragraph/i]) {
+        if (await addBlockFromSidebar(page, pattern)) {
+          target =
+            (await findFocusedContentEditable(page)) ||
+            (await findBestContentEditable(page, { excludeTitle: draftTitle }));
+          if (target) break;
+        }
+      }
     }
-  }
 
-  if (!target) {
-    await clickMailerLiteBodyPlaceholder(page);
-    await page.keyboard.insertText(value);
-    await page.waitForTimeout(1000);
-    if (!(await isBodyPlaceholderVisible(page))) {
-      logStep("MailerLite block editor body filled on second placeholder attempt");
-      return true;
+    if (!target) {
+      await clickMailerLiteBodyPlaceholder(page);
+      target =
+        (await findFocusedContentEditable(page)) ||
+        (await findBestContentEditable(page, { excludeTitle: draftTitle }));
     }
-    return false;
-  }
 
-  try {
+    if (!target) {
+      logStep("MailerLite body block not found after placeholder click");
+      return false;
+    }
+
     const inserted = await insertIntoEditable(page, target, value);
-    if (inserted && !(await isBodyPlaceholderVisible(page))) {
-      logStep("MailerLite block editor body filled");
+    const bodyLen = await readEditableLength(target.loc);
+    const placeholderGone = !(await isBodyPlaceholderVisible(page));
+    if (inserted && (placeholderGone || bodyLen > 40)) {
+      logStep(`MailerLite block editor body filled (${bodyLen} chars)`);
       return true;
     }
-    logStep("MailerLite block editor body fill did not stick");
+
+    logStep(`MailerLite block editor body fill did not stick (${bodyLen} chars)`);
+    await captureDebug(page, "body-fill-stuck");
     return false;
   } catch (err) {
     logStep(`MailerLite block editor body fill error: ${err.message}`);
@@ -1325,8 +1499,7 @@ async function submitNewPostForm(page, title) {
   }
 
   await titleInput.click({ timeout: 10000 });
-  await page.keyboard.press("Control+A");
-  await page.keyboard.press("Backspace");
+  await titleInput.fill("").catch(() => {});
   await titleInput.pressSequentially(title, { delay: 35 });
   await titleInput.dispatchEvent("input");
   await titleInput.dispatchEvent("change");
@@ -1539,7 +1712,13 @@ async function createBlogDraft(page, draft, siteId) {
   await page.waitForTimeout(3000);
 
   const html = String(draft.content || "").trim();
-  const filled = await fillMailerLiteBody(page, html, draft.title);
+  let filled = false;
+  try {
+    filled = await fillMailerLiteBody(page, html, draft.title);
+  } catch (err) {
+    logStep(`Body fill error: ${err.message}`);
+    await captureDebug(page, "body-fill-error");
+  }
   if (!filled) {
     logStep(
       "Could not auto-fill body in MailerLite editor — will still save title-only draft",
@@ -1550,22 +1729,7 @@ async function createBlogDraft(page, draft, siteId) {
   await page.waitForTimeout(1200);
 
   logStep("Saving post as draft in MailerLite editor");
-  let saved = await clickEnabledButton(page, ["Save as draft", "Save draft"]);
-  if (!saved) {
-    const draftBtn = page.locator('button').filter({ hasText: /^save as draft$/i }).first();
-    if (await draftBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await draftBtn.click({ timeout: 10000 }).catch(() => {});
-      saved = true;
-    }
-  }
-  if (!saved) {
-    saved = await clickEnabledButton(page, ["Save"]);
-    if (saved) {
-      await page.waitForTimeout(500);
-      saved = await clickEnabledButton(page, ["Save as draft", "Save draft"]);
-    }
-  }
-
+  const saved = await saveMailerLiteContentDraft(page);
   if (!saved) {
     await captureDebug(page, "save-draft-missing");
     const err = new Error(
@@ -1581,16 +1745,15 @@ async function createBlogDraft(page, draft, siteId) {
   const blogBase =
     settings.client_blog_url ||
     `https://dashboard.mailerlite.com/sites/${siteId}/blog`;
+  const contentUrl = isMailerLiteContentUrl(page.url()) ? page.url() : null;
 
   await openBlogList(page, siteId);
   const foundOnList = await findPostOnBlogList(page, draft.title);
   if (!foundOnList) {
-    await captureDebug(page, "post-not-on-list");
-    const err = new Error(
-      `Post may be saved but "${draft.title.slice(0, 60)}" was not found on the MailerLite blog list. Try filter "Drafts" or "All posts".`,
+    await captureDebug(page, "post-not-on-list-warning");
+    logStep(
+      `Post saved but "${draft.title.slice(0, 60)}" not visible on blog list yet — check Drafts in MailerLite`,
     );
-    err.status = 500;
-    throw err;
   }
 
   await captureDebug(page, "push-ok");
@@ -1599,8 +1762,10 @@ async function createBlogDraft(page, draft, siteId) {
     ok: true,
     title: draft.title,
     slug: draft.slug,
-    mailerlite_dashboard_url: blogBase,
-    note: `Draft "${draft.title}" created on MailerLite. It may show as unpublished/draft in Posts.`,
+    mailerlite_dashboard_url: contentUrl || blogBase,
+    note: foundOnList
+      ? `Draft "${draft.title}" created on MailerLite. It may show as unpublished/draft in Posts.`
+      : `Draft "${draft.title}" saved in MailerLite editor. Open Posts → Drafts if it is not on the list yet.`,
   };
 }
 
@@ -1617,6 +1782,7 @@ export async function testMailerLiteBotLogin() {
         }
         await captureDebug(page, "bot-test-ok");
         await persistLoginBackup(context);
+        await settingsModel.clearMailerLiteSessionAlert();
         return {
           ok: true,
           message: "Bot logged in and opened MailerLite blog list.",
@@ -1670,6 +1836,7 @@ export async function pushDraftToMailerLite(draftId) {
         const result = await createBlogDraft(page, draft, creds.siteId);
         logStep(`Push completed for draft #${draftId}`);
         await persistLoginBackup(context);
+        await settingsModel.clearMailerLiteSessionAlert();
 
         await draftsModel.updateDraftPushStatus(draftId, {
           mailerlite_push_status: "pushed",
@@ -1679,6 +1846,9 @@ export async function pushDraftToMailerLite(draftId) {
 
         return { draftId, ...result };
       } catch (err) {
+        if (err?.status === 401) {
+          await markMailerLiteSessionNeeded(page, err).catch(() => {});
+        }
         await draftsModel.updateDraftPushStatus(draftId, {
           mailerlite_push_status: "failed",
           mailerlite_push_error: err.message,
@@ -1938,4 +2108,11 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-x";
+export const BOT_RUNTIME_VERSION = "2026-09-30-a";
+
+/**
+ * FUTURE (not built yet) — see docs/BLOG-2.0-FUTURE.md
+ * - Admin OTP input + bot pause/resume on verification page
+ * - Email/Teams notify when awaiting_otp
+ * - Newsletter via MailerLite API + Monday scheduler
+ */
