@@ -8,6 +8,11 @@ import {
   submitMailerLiteBotOtp,
 } from "./blog20.mailerliteBot.js";
 import { getPublicApiBase } from "../agents/automations/blogApproval.email.js";
+import {
+  handleBlog20SignedAction,
+  requestBlog20DraftApproval,
+  sendTestBlog20ApprovalEmail,
+} from "./blog20.approval.service.js";
 
 export async function getOverview(req, res) {
   try {
@@ -147,5 +152,64 @@ export async function getChecklist(req, res) {
     });
   } catch (err) {
     res.status(500).json({ message: err.message || "Failed to load checklist" });
+  }
+}
+
+/** Public: GET /api/blog-2.0/approvals/go?token=... */
+export async function goBlog20Approval(req, res) {
+  try {
+    const token = req.query.token || req.body?.token;
+    if (!token) {
+      return res
+        .status(400)
+        .type("html")
+        .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
+    }
+    const result = await handleBlog20SignedAction({
+      token,
+      actorEmail: req.query.email || null,
+    });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog20-approval] go failed:", err);
+    res
+      .status(500)
+      .type("html")
+      .send("<h1>Something went wrong</h1><p>Please try again or contact admin.</p>");
+  }
+}
+
+export async function requestDraftApproval(req, res) {
+  try {
+    const draft = await draftsModel.getDraftById(req.params.id);
+    if (!draft) return res.status(404).json({ message: "Draft not found" });
+    const settings = await model.getSettings();
+    const result = await requestBlog20DraftApproval({
+      draft,
+      requestedBy: req.user?.email || req.user?.sub || "admin",
+      requesterEmail: req.user?.email || null,
+      approvalEmails: settings.approval_emails,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || "Failed to send approval email",
+    });
+  }
+}
+
+export async function testBlog20ApprovalEmail(req, res) {
+  try {
+    const settings = await model.getSettings();
+    const recipients =
+      req.body?.emails ||
+      req.body?.approval_emails ||
+      settings.approval_emails;
+    const result = await sendTestBlog20ApprovalEmail(recipients);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || "Failed to send test approval email",
+    });
   }
 }

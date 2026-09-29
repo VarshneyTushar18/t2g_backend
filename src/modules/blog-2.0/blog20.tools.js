@@ -3,6 +3,7 @@ import { z } from "zod";
 import * as draftsModel from "./blog20.drafts.model.js";
 import * as settingsModel from "./blog20.model.js";
 import { pushDraftToMailerLite } from "./blog20.mailerliteBot.js";
+import { requestBlog20DraftApproval } from "./blog20.approval.service.js";
 
 export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 }) {
   const createBrightCrmBlogDraft = tool({
@@ -36,30 +37,50 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
       });
       const blogBase = settings.client_blog_url || settings.client_site_url || "";
       let botPush = null;
+      let approval = null;
+
       if (settings.mailerlite_bot_enabled && settings.mailerlite_bot_auto_push) {
         try {
           botPush = await pushDraftToMailerLite(draft.id);
         } catch (err) {
           botPush = { ok: false, error: err.message };
         }
+      } else if ((settings.approval_emails || []).length > 0) {
+        try {
+          approval = await requestBlog20DraftApproval({
+            draft,
+            requestedBy: userId,
+            requesterEmail: null,
+            approvalEmails: settings.approval_emails,
+          });
+        } catch (err) {
+          approval = { ok: false, error: err.message };
+        }
       }
+
+      const onMailerLite = Boolean(botPush?.ok);
+      const approvalSent = Boolean(approval && !approval.skipped && approval.approvalId);
       return {
         ok: true,
         id: draft.id,
         slug: draft.slug,
         title: draft.title,
-        status: draft.status,
+        status: approvalSent ? "pending" : draft.status,
         project: "blog_2_0",
         client_site: settings.client_site_url,
         client_blog: blogBase,
-        mailerlite_note:
-          "Draft saved in Blog-2.0 only — NOT on MailerLite yet. Human must open MailerLite → Sites → Blog → Create a post and paste title, excerpt, content, featured image, then Save as draft.",
+        mailerlite_note: onMailerLite
+          ? "Draft pushed to MailerLite website as draft — human must Publish in MailerLite."
+          : approvalSent
+            ? "Approval email sent to team. When they click Yes, the MailerLite bot will push this draft automatically."
+            : "Draft saved in Blog-2.0 only — NOT on MailerLite yet. Add approval emails in Setup or push manually from Drafts.",
         suggested_slug: draft.slug,
         suggested_url_after_manual_publish: blogBase
           ? `${blogBase.replace(/\/$/, "")}/${draft.slug}`
           : null,
-        on_mailerlite_site: Boolean(botPush?.ok),
+        on_mailerlite_site: onMailerLite,
         mailerlite_bot: botPush,
+        approval,
         featured_image: draft.featured_image,
         humanize_percent: humanizePercent,
       };

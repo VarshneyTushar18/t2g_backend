@@ -122,6 +122,13 @@ export async function createDraft(data) {
   return getDraftById(result.insertId);
 }
 
+export async function updateDraftStatus(id, status) {
+  await blogDb.query(
+    `UPDATE blog_2_0_drafts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [status, Number(id)],
+  );
+}
+
 export async function getDraftById(id) {
   const [rows] = await blogDb.query(
     "SELECT * FROM blog_2_0_drafts WHERE id = ? LIMIT 1",

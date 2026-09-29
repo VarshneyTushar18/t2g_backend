@@ -45,6 +45,9 @@ const requireBlog20Edit = [
 
 router.use(requireBlogDb);
 
+// Public Yes/No/Preview links from approval emails (no admin auth)
+router.get("/approvals/go", controller.goBlog20Approval);
+
 router.get("/overview", ...requireBlog20View, controller.getOverview);
 router.get("/checklist", ...requireBlog20View, controller.getChecklist);
 router.get("/settings", ...requireBlog20View, controller.getSettings);
@@ -59,6 +62,16 @@ router.post(
   "/drafts/:id/push-mailerlite",
   ...requireBlog20Edit,
   controller.pushDraftToMailerLiteSite,
+);
+router.post(
+  "/drafts/:id/request-approval",
+  ...requireBlog20Edit,
+  controller.requestDraftApproval,
+);
+router.post(
+  "/approvals/test-email",
+  ...requireBlog20Edit,
+  controller.testBlog20ApprovalEmail,
 );
 
 export default router;
