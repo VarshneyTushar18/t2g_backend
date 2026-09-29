@@ -37,9 +37,24 @@ Isolated admin module for Sahil sir's project. Does **not** replace the main Tec
 | 9 | Newsletter: full HTML vs excerpt+link | Client decision | Blog-2.0 → MailerLite |
 | 10 | Schedule: weekly/monthly, day, time | Client decision | Automations (Phase 3) |
 
-## MailerLite browser bot (website blog)
+## MailerLite browser bot (website blog) — Option 1 workflow
 
-MailerLite has no blog API. The bot uses **Playwright** to log in and create drafts.
+MailerLite has no blog API. The bot uses **Playwright** + a **saved session** (Cloudflare blocks fully automated headless login).
+
+### Weekly workflow (recommended)
+
+1. **Blog Agent** writes draft → saved in Blog-2.0 → Drafts
+2. **Push to MailerLite** (admin button or API) — bot uses saved session, creates draft in MailerLite
+3. **Human** reviews and clicks **Publish** in MailerLite
+4. When session expires (weeks later): run `xvfb-run -a npm run blog20:save-session` once on server
+
+| Step | Automatic? |
+|------|----------------|
+| AI writes blog | Yes |
+| Bot creates MailerLite website draft | Yes (with valid session) |
+| Bot logs in through captcha | No — manual session save only |
+| Publish on MailerLite | Human |
+| Newsletter email (Phase 2) | API — no captcha |
 
 ### Server safety (production)
 
