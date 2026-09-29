@@ -861,9 +861,24 @@ export async function watchMailerLiteSetupProgress(page, siteId, { timeoutMs = 1
  * Manual session save (xvfb-run). Tracks each step while you log in, then auto-saves.
  */
 export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch = true } = {}) {
-  const settings = await settingsModel.getSettingsWithSecrets();
-  const siteId = settings.mailerlite_site_id || "196949098888169226";
+  let siteId = process.env.BLOG20_SITE_ID || "196949098888169226";
+  try {
+    const settings = await settingsModel.getSettingsWithSecrets();
+    siteId = settings.mailerlite_site_id || siteId;
+  } catch {
+    logStep(`Using default site ID ${siteId} (DB settings unavailable)`);
+  }
   ensureDirs();
+
+  const canHeaded = process.platform === "win32" || Boolean(process.env.DISPLAY);
+  if (!canHeaded) {
+    const err = new Error(
+      "No display available. On server run: npm run blog20:save-session (auto xvfb) " +
+        "OR run on Windows PC and copy storage/blog-2.0/browser-profile to server.",
+    );
+    err.status = 500;
+    throw err;
+  }
 
   const { context, page } = await launchBotContext({ headedOverride: true });
 
