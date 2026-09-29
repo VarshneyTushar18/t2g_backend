@@ -668,7 +668,10 @@ async function findCreatePostButton(page, { timeout = 60000, click = true } = {}
     for (const candidate of candidates) {
       const btn = candidate.first();
       if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
-        if (click) await btn.click({ timeout: 10000 });
+        if (click) {
+          await btn.scrollIntoViewIfNeeded().catch(() => {});
+          await btn.click({ timeout: 10000 });
+        }
         return btn;
       }
     }
@@ -936,6 +939,8 @@ async function openBlogContentEditor(page, draftTitle = "") {
 async function findNewPostTitleInput(page) {
   const selectors = [
     '[role="dialog"] input[type="text"]',
+    '[class*="modal"] input[type="text"]',
+    '[class*="Modal"] input[type="text"]',
     'input[placeholder*="post title" i]',
     'input[placeholder*="title" i]',
     'input[name*="title" i]',
@@ -951,6 +956,16 @@ async function findNewPostTitleInput(page) {
   return null;
 }
 
+async function waitForNewPostTitleInput(page, timeoutMs = 25000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const input = await findNewPostTitleInput(page);
+    if (input) return input;
+    await page.waitForTimeout(500);
+  }
+  return null;
+}
+
 async function openNewPostForm(page, siteId) {
   for (const suffix of ["new", "create"]) {
     const path = `/sites/${siteId}/blog/posts/${suffix}`;
@@ -962,15 +977,11 @@ async function openNewPostForm(page, siteId) {
   return false;
 }
 
-async function submitNewPostForm(page, title, siteId) {
-  let titleInput = await findNewPostTitleInput(page);
-  if (!titleInput) {
-    logStep("Title input not visible — opening new post page directly");
-    const opened = await openNewPostForm(page, siteId);
-    if (!opened) {
-      return { ok: false, reason: "title-input-missing", url: page.url() };
-    }
-    titleInput = (await findNewPostTitleInput(page)) || page.locator('input[type="text"]').first();
+async function submitNewPostForm(page, title) {
+  const titleInput =
+    (await findNewPostTitleInput(page)) || page.locator('input[type="text"]').first();
+  if (!(await titleInput.isVisible({ timeout: 3000 }).catch(() => false))) {
+    return { ok: false, reason: "title-input-missing", url: page.url() };
   }
 
   await titleInput.click({ timeout: 10000 });
@@ -1069,25 +1080,34 @@ async function tryOpenPostEditorByUrl(page, siteId) {
 async function createBlogDraft(page, draft, siteId) {
   logStep(`Creating MailerLite post: ${draft.title.slice(0, 80)}`);
   await dismissOverlays(page);
+  await openBlogList(page, siteId);
 
-  let formReady = await openNewPostForm(page, siteId);
-  if (!formReady) {
-    logStep("Direct new-post URL failed — trying Create a post button");
-    const createBtn = await findCreatePostButton(page, { timeout: 60000, click: true });
-    if (!createBtn) {
-      await captureDebug(page, "create-post-button-missing");
-      const err = new Error(
-        `Create a post button not found on MailerLite blog page (${page.url()}). Check uploads/blog20-bot-debug/.`,
-      );
-      err.status = 500;
-      throw err;
-    }
-    await page.waitForTimeout(2500);
-    logStep(`After Create a post click: ${page.url()}`);
+  logStep("Clicking Create a post on MailerLite blog");
+  const createBtn = await findCreatePostButton(page, { timeout: 25000, click: true });
+  if (!createBtn) {
+    await captureDebug(page, "create-post-button-missing");
+    const err = new Error(
+      `Create a post button not found (${page.url()}). Check uploads/blog20-bot-debug/.`,
+    );
+    err.status = 500;
+    throw err;
+  }
+  await page.waitForTimeout(1500);
+  logStep(`After Create a post click: ${page.url()}`);
+
+  const titleInput = await waitForNewPostTitleInput(page, 25000);
+  if (!titleInput) {
+    await captureDebug(page, "create-title-input-missing");
+    await logVisibleButtons(page, "After-Create-a-post");
+    const err = new Error(
+      `Title input did not appear after Create a post (${page.url()}). Check uploads/blog20-bot-debug/.`,
+    );
+    err.status = 500;
+    throw err;
   }
 
   logStep("Filling new post title in MailerLite");
-  const createResult = await submitNewPostForm(page, draft.title, siteId);
+  const createResult = await submitNewPostForm(page, draft.title);
   if (!createResult.ok) {
     await captureDebug(page, "create-title-stuck");
     const err = new Error(
@@ -1550,4 +1570,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-r";
+export const BOT_RUNTIME_VERSION = "2026-09-29-s";
