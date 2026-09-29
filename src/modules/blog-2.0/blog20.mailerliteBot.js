@@ -1111,7 +1111,6 @@ async function createBlogDraft(page, draft, siteId) {
   await page.waitForTimeout(4000);
 
   const settings = await settingsModel.getSettings();
-  const siteId = settings.mailerlite_site_id || "196949098888169226";
   const blogBase =
     settings.client_blog_url ||
     `https://dashboard.mailerlite.com/sites/${siteId}/blog`;
@@ -1472,4 +1471,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-o";
+export const BOT_RUNTIME_VERSION = "2026-09-29-p";
