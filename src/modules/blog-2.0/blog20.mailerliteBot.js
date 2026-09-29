@@ -764,9 +764,33 @@ async function clickEnabledButton(page, labels) {
   return false;
 }
 
+function isMailerLiteContentUrl(url = "") {
+  return /\/sites\/\d+\/content\/[^/?#]+/i.test(url);
+}
+
+function isMailerLitePostUrl(url = "") {
+  return (
+    /\/blog\/posts\/[^/?#]+/i.test(url) &&
+    !/\/blog\/posts\/(new|create)/i.test(url)
+  );
+}
+
+function isPostCreateSuccessUrl(url = "") {
+  return isMailerLiteContentUrl(url) || isMailerLitePostUrl(url);
+}
+
 async function isBlogEditorOpen(page) {
   const url = page.url();
   if (/\/posts\/[^/]+\/(edit|content|write)/i.test(url)) return true;
+  if (isMailerLiteContentUrl(url)) {
+    const editor = page.locator(
+      '[contenteditable="true"], .ProseMirror, [data-test-id*="editor"], textarea[class*="editor"], iframe[title*="editor" i]',
+    );
+    if (await editor.first().isVisible({ timeout: 1500 }).catch(() => false)) {
+      return true;
+    }
+    return false;
+  }
   if (await page
     .locator(
       '[contenteditable="true"], .ProseMirror, [data-test-id*="editor"], [class*="editor"] [contenteditable]',
@@ -859,6 +883,8 @@ async function clickSetupContinueButton(page) {
     "Edit content",
     "Start writing",
     "Write content",
+    "Go to editor",
+    "Open editor",
     "Continue",
     "Next",
     "Edit post",
@@ -912,13 +938,17 @@ async function clickSetupContinueButton(page) {
 }
 
 async function openBlogContentEditor(page, draftTitle = "") {
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
     if (await isBlogEditorOpen(page)) {
       logStep("MailerLite content editor already open — skipping setup button");
       return true;
     }
 
     logStep(`Opening content editor (attempt ${attempt}, URL: ${page.url()})`);
+    if (isMailerLiteContentUrl(page.url()) && attempt === 1) {
+      await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+      await dismissOverlays(page);
+    }
 
     if (draftTitle && page.url().includes("/blog") && !page.url().includes("/posts/")) {
       await clickPostInBlogList(page, draftTitle);
@@ -1023,11 +1053,18 @@ async function submitNewPostForm(page, title) {
 
     logStep("Clicking create/save on new post form");
     await createBtn.click({ timeout: 10000 });
-    await page.waitForTimeout(3500);
+    await page
+      .waitForURL(
+        (u) => isPostCreateSuccessUrl(u.toString()),
+        { timeout: 20000 },
+      )
+      .catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(2500);
 
     const url = page.url();
-    if (url.match(/\/blog\/posts\/[^/]+/) && !url.includes("/new") && !url.includes("/create")) {
-      return { ok: true, mode: "url" };
+    if (isPostCreateSuccessUrl(url)) {
+      return { ok: true, mode: isMailerLiteContentUrl(url) ? "content-url" : "url" };
     }
     if (await findPostOnBlogList(page, title)) return { ok: true, mode: "list" };
     if (await isBlogEditorOpen(page)) return { ok: true, mode: "editor" };
@@ -1048,6 +1085,27 @@ async function extractBlogPostId(page) {
 }
 
 async function tryOpenPostEditorByUrl(page, siteId) {
+  const contentMatch = page.url().match(/\/content\/([^/?#]+)/i);
+  if (contentMatch?.[1]) {
+    logStep(`On MailerLite content page (${contentMatch[1]}) — opening editor`);
+    if (await isBlogEditorOpen(page)) return true;
+    if (await clickSetupContinueButton(page)) {
+      await page.waitForTimeout(2500);
+      if (await isBlogEditorOpen(page)) return true;
+    }
+    for (const suffix of ["edit", "write", ""]) {
+      const path = suffix
+        ? `/sites/${siteId}/content/${contentMatch[1]}/${suffix}`
+        : `/sites/${siteId}/content/${contentMatch[1]}`;
+      await gotoPage(page, `https://dashboard.mailerlite.com${path}`, "content editor URL");
+      if (await isBlogEditorOpen(page)) return true;
+      if (await clickSetupContinueButton(page)) {
+        await page.waitForTimeout(2500);
+        if (await isBlogEditorOpen(page)) return true;
+      }
+    }
+  }
+
   let postId = await extractBlogPostId(page);
   if (!postId) {
     postId = await page
@@ -1119,10 +1177,15 @@ async function createBlogDraft(page, draft, siteId) {
   logStep(`Post created (${createResult.mode || "ok"})`);
   await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
   await page
-    .waitForURL(/\/blog\/posts\//, { timeout: 20000 })
+    .waitForURL(
+      (u) => isPostCreateSuccessUrl(u.toString()) || u.toString().includes("/blog"),
+      { timeout: 20000 },
+    )
     .catch(() => {});
   logStep(`Post-create URL: ${page.url()}`);
   await page.waitForTimeout(2500);
+
+  const onContentSetup = isMailerLiteContentUrl(page.url());
 
   const excerptArea = page
     .locator(
@@ -1134,7 +1197,7 @@ async function createBlogDraft(page, draft, siteId) {
     await page.waitForTimeout(800);
   }
 
-  if (!page.url().includes("/posts/")) {
+  if (!page.url().includes("/posts/") && !onContentSetup) {
     await clickPostInBlogList(page, draft.title);
     logStep(`After opening post from list: ${page.url()}`);
   }
@@ -1570,4 +1633,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-s";
+export const BOT_RUNTIME_VERSION = "2026-09-29-t";
