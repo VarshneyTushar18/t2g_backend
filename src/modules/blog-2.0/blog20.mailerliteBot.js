@@ -907,6 +907,21 @@ async function openBlogContentEditor(page, draftTitle = "") {
 }
 
 async function clickDialogCreate(page) {
+  const dialogCreate = page
+    .locator('[role="dialog"] button')
+    .filter({ hasText: /^create$/i })
+    .first();
+  if (await dialogCreate.isVisible({ timeout: 5000 }).catch(() => false)) {
+    for (let i = 0; i < 25; i += 1) {
+      if (await dialogCreate.isEnabled().catch(() => false)) {
+        await dialogCreate.click({ timeout: 10000 });
+        await page.waitForTimeout(2000);
+        return true;
+      }
+      await page.waitForTimeout(300);
+    }
+  }
+
   const clicked = await page
     .evaluate(() => {
       const buttons = [...document.querySelectorAll("button")];
@@ -933,7 +948,44 @@ async function clickDialogCreate(page) {
   return false;
 }
 
-async function createBlogDraft(page, draft) {
+async function extractBlogPostId(page) {
+  const match = page.url().match(/\/blog\/posts\/([^/?#]+)/i);
+  const id = match?.[1];
+  if (!id || id === "new" || id === "create") return null;
+  return id;
+}
+
+async function tryOpenPostEditorByUrl(page, siteId) {
+  let postId = await extractBlogPostId(page);
+  if (!postId) {
+    postId = await page
+      .evaluate(() => {
+        const link = document.querySelector('a[href*="/blog/posts/"]');
+        const href = link?.getAttribute("href") || "";
+        const m = href.match(/\/blog\/posts\/([^/?#]+)/i);
+        const id = m?.[1];
+        return id && id !== "new" && id !== "create" ? id : null;
+      })
+      .catch(() => null);
+  }
+  if (!postId) return false;
+
+  const suffixes = ["edit", "content", "write", ""];
+  for (const suffix of suffixes) {
+    const path = suffix
+      ? `/sites/${siteId}/blog/posts/${postId}/${suffix}`
+      : `/sites/${siteId}/blog/posts/${postId}`;
+    await gotoPage(page, `https://dashboard.mailerlite.com${path}`, "post editor URL");
+    if (await isBlogEditorOpen(page)) return true;
+    if (await clickSetupContinueButton(page)) {
+      await page.waitForTimeout(2500);
+      if (await isBlogEditorOpen(page)) return true;
+    }
+  }
+  return false;
+}
+
+async function createBlogDraft(page, draft, siteId) {
   logStep(`Creating MailerLite post: ${draft.title.slice(0, 80)}`);
   await dismissOverlays(page);
 
@@ -983,12 +1035,29 @@ async function createBlogDraft(page, draft) {
     await page.waitForTimeout(800);
   }
 
+  if (!page.url().includes("/posts/")) {
+    await clickPostInBlogList(page, draft.title);
+    logStep(`After opening post from list: ${page.url()}`);
+  }
+
+  await tryOpenPostEditorByUrl(page, siteId);
+
   logStep("Opening MailerLite content editor");
   const openedEditor = await openBlogContentEditor(page, draft.title);
   if (!openedEditor) {
     await captureDebug(page, "save-edit-missing");
+    const buttons = await page
+      .evaluate(() =>
+        [...document.querySelectorAll("button, a")]
+          .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
+          .filter((t) => t && t.length < 80)
+          .slice(0, 12),
+      )
+      .catch(() => []);
     const err = new Error(
-      'Could not open MailerLite content editor (tried Save and edit content / Continue / etc.). Check uploads/blog20-bot-debug/.',
+      `Could not open MailerLite content editor at ${page.url()}. ` +
+        `Buttons seen: ${buttons.join(" | ") || "none"}. ` +
+        "Check uploads/blog20-bot-debug/.",
     );
     err.status = 500;
     throw err;
@@ -1132,7 +1201,7 @@ export async function pushDraftToMailerLite(draftId) {
           logStep("Opening MailerLite blog list");
           await openBlogList(page, creds.siteId);
         }
-        const result = await createBlogDraft(page, draft);
+        const result = await createBlogDraft(page, draft, creds.siteId);
         logStep(`Push completed for draft #${draftId}`);
         await persistLoginBackup(context);
 
@@ -1403,4 +1472,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-n";
+export const BOT_RUNTIME_VERSION = "2026-09-29-o";
