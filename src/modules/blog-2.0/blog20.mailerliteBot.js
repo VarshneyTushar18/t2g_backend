@@ -76,7 +76,21 @@ function hasBrowserProfile() {
 }
 
 function hasSavedLogin() {
+  if (process.platform === "linux") {
+    return fs.existsSync(SESSION_FILE);
+  }
   return hasBrowserProfile() || fs.existsSync(SESSION_FILE);
+}
+
+function sessionJsonMissingOnLinuxError() {
+  const err = new Error(
+    "Missing storage/blog-2.0/mailerlite-session.json on server. " +
+      "Windows browser-profile does NOT work on Linux. From your PC run: " +
+      'scp "d:\\important files\\Tech2globe\\tech2globe-backend\\storage\\blog-2.0\\mailerlite-session.json" ' +
+      "root@103.174.102.70:/root/t2g_backend/storage/blog-2.0/",
+  );
+  err.status = 500;
+  return err;
 }
 
 /** Windows Chrome profile cookies are OS-encrypted and fail on Linux — use Playwright JSON there. */
@@ -136,6 +150,14 @@ async function launchBotContext({ headedOverride, useChromeChannel } = {}) {
     );
   }
   ensureDirs();
+  if (process.platform === "linux") {
+    logStep(
+      `Session file ${SESSION_FILE} — ${fs.existsSync(SESSION_FILE) ? "found" : "MISSING"}`,
+    );
+    if (!fs.existsSync(SESSION_FILE)) {
+      throw sessionJsonMissingOnLinuxError();
+    }
+  }
   const { options, useChrome } = buildPersistentContextOptions({
     headed,
     useChromeChannel,
@@ -490,9 +512,11 @@ async function waitForDashboard(page, timeoutMs = 90000) {
 async function ensureMailerLiteSession(page, creds) {
   if (hasSavedLogin()) {
     logStep(
-      hasBrowserProfile()
-        ? "Trying saved MailerLite login (browser profile)"
-        : "Trying saved MailerLite session (JSON)",
+      shouldUseSessionJson()
+        ? "Trying saved MailerLite session (JSON)"
+        : hasBrowserProfile()
+          ? "Trying saved MailerLite login (browser profile)"
+          : "Trying saved MailerLite session (JSON)",
     );
     const blogUrls = buildBlogUrls(creds.siteId);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -737,6 +761,70 @@ async function clickEnabledButton(page, labels) {
   return false;
 }
 
+async function isBlogEditorOpen(page) {
+  const url = page.url();
+  if (/\/posts\/[^/]+\/(edit|content)/i.test(url)) return true;
+  if (await page
+    .locator('[contenteditable="true"], .ProseMirror, [data-test-id*="editor"]')
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false)) {
+    return true;
+  }
+  return false;
+}
+
+async function openBlogContentEditor(page) {
+  if (await isBlogEditorOpen(page)) {
+    logStep("MailerLite content editor already open — skipping setup button");
+    return true;
+  }
+
+  const labels = [
+    "Save and edit content",
+    "Save & edit content",
+    "Save and continue",
+    "Edit content",
+    "Start writing",
+    "Continue",
+    "Next",
+  ];
+  if (await clickEnabledButton(page, labels)) {
+    return true;
+  }
+
+  const clicked = await page
+    .evaluate(() => {
+      const candidates = [...document.querySelectorAll("button, a")];
+      const patterns = [
+        /save.*edit.*content/i,
+        /edit content/i,
+        /start writing/i,
+        /^continue$/i,
+        /^next$/i,
+      ];
+      for (const el of candidates) {
+        if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
+        const text = (el.textContent || "").trim();
+        if (!text || text.length > 60) continue;
+        if (patterns.some((re) => re.test(text))) {
+          el.click();
+          return text;
+        }
+      }
+      return null;
+    })
+    .catch(() => null);
+
+  if (clicked) {
+    logStep(`Opened editor via "${clicked}"`);
+    await page.waitForTimeout(2500);
+    return true;
+  }
+
+  return false;
+}
+
 async function clickDialogCreate(page) {
   const clicked = await page
     .evaluate(() => {
@@ -797,7 +885,7 @@ async function createBlogDraft(page, draft) {
     err.status = 500;
     throw err;
   }
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(4000);
 
   const excerptArea = page
     .locator(
@@ -806,16 +894,15 @@ async function createBlogDraft(page, draft) {
     .first();
   if (await excerptArea.isVisible({ timeout: 5000 }).catch(() => false)) {
     await typeIntoInput(page, excerptArea, draft.excerpt || draft.title.slice(0, 160));
+    await page.waitForTimeout(500);
   }
 
-  const openedEditor = await clickEnabledButton(page, [
-    "Save and edit content",
-    "Save & edit content",
-  ]);
+  logStep("Opening MailerLite content editor");
+  const openedEditor = await openBlogContentEditor(page);
   if (!openedEditor) {
     await captureDebug(page, "save-edit-missing");
     const err = new Error(
-      'Could not find "Save and edit content" on MailerLite post setup page.',
+      'Could not open MailerLite content editor (tried Save and edit content / Continue / etc.). Check uploads/blog20-bot-debug/.',
     );
     err.status = 500;
     throw err;
@@ -1230,4 +1317,4 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-k";
+export const BOT_RUNTIME_VERSION = "2026-09-29-m";
