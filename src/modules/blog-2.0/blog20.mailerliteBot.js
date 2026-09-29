@@ -76,14 +76,22 @@ async function launchBrowser() {
   });
 }
 
+export const BOT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+export function getBotContextOptions(extra = {}) {
+  return {
+    viewport: { width: 1366, height: 900 },
+    userAgent: BOT_USER_AGENT,
+    locale: "en-US",
+    timezoneId: "America/New_York",
+    ...extra,
+  };
+}
+
 function newBotContext(browser) {
   const useSession = fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {};
-  return browser.newContext({
-    ...useSession,
-    viewport: { width: 1366, height: 900 },
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  });
+  return browser.newContext(getBotContextOptions(useSession));
 }
 
 function ensureDirs() {
@@ -273,22 +281,35 @@ async function waitForDashboard(page, timeoutMs = 90000) {
 async function ensureMailerLiteSession(page, creds) {
   if (fs.existsSync(SESSION_FILE)) {
     logStep("Trying saved MailerLite session");
-    try {
-      await openBlogList(page, creds.siteId);
-      logStep("Saved session is valid");
-      return;
-    } catch (err) {
-      await captureDebug(page, "session-invalid");
-      const refresh = "xvfb-run -a npm run blog20:save-session";
-      const pushHint = "xvfb-run -a npm run test:blog20-push -- <draftId>";
-      const err2 = new Error(
-        `Saved MailerLite session could not open the blog (at ${page.url()}). ` +
-          `Do not use headless login — refresh session: ${refresh}. ` +
-          `Then push with: ${pushHint}`,
-      );
-      err2.status = 401;
-      throw err2;
+    const blogUrl = `https://dashboard.mailerlite.com/sites/${creds.siteId}/blog/posts`;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        if (page.url().includes("accounts.mailerlite.com") || attempt > 1) {
+          logStep(`Opening blog directly (attempt ${attempt})`);
+          await gotoPage(page, blogUrl, "blog (session)");
+          await page.waitForTimeout(2500);
+        }
+        await openBlogList(page, creds.siteId);
+        logStep("Saved session is valid");
+        return;
+      } catch {
+        if (attempt < 3) {
+          logStep("Session not on blog yet — retrying dashboard navigation");
+          await gotoPage(page, "https://dashboard.mailerlite.com/", "dashboard");
+          await page.waitForTimeout(2000);
+        }
+      }
     }
+    await captureDebug(page, "session-invalid");
+    const refresh = "xvfb-run -a npm run blog20:save-session";
+    const pushHint = "xvfb-run -a npm run test:blog20-push -- <draftId>";
+    const err2 = new Error(
+      `Saved MailerLite session could not open the blog (at ${page.url()}). ` +
+        `Re-save session (wait until you see Create a post): ${refresh}. ` +
+        `Then push: ${pushHint}`,
+    );
+    err2.status = 401;
+    throw err2;
   }
   await loginIfNeeded(page, creds);
   await waitForDashboard(page);
@@ -698,4 +719,116 @@ export async function pushDraftToMailerLite(draftId) {
   );
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-a";
+const SETUP_STEPS = [
+  { id: 1, key: "started", label: "Script started — opening MailerLite" },
+  { id: 2, key: "login", label: "Login page — enter your MailerLite email & password" },
+  { id: 3, key: "accounts", label: "Accounts portal — completing sign-in" },
+  { id: 4, key: "dashboard", label: "Dashboard reached" },
+  { id: 5, key: "blog", label: "Blog section opened (Tech2globe site)" },
+  { id: 6, key: "ready", label: 'Blog posts page ready — "Create a post" visible' },
+  { id: 7, key: "saved", label: "Session saved successfully" },
+];
+
+function logSetupStep(step, extra = "") {
+  const suffix = extra ? ` — ${extra}` : "";
+  console.log(`[blog-2.0-setup] Step ${step.id}/7: ${step.label}${suffix}`);
+}
+
+async function detectSetupStep(page, siteId) {
+  const url = page.url();
+  if (url.includes("/login")) return "login";
+  if (url.includes("accounts.mailerlite.com")) return "accounts";
+  if (url.includes("dashboard.mailerlite.com") && url.includes(`/sites/${siteId}/blog`)) {
+    const hasCreate = await findCreatePostButton(page, { timeout: 1500, click: false });
+    if (hasCreate) return "ready";
+    return "blog";
+  }
+  if (url.includes("dashboard.mailerlite.com")) return "dashboard";
+  return null;
+}
+
+/**
+ * Watch the browser while the user logs in manually. Logs each milestone once.
+ * Resolves when blog posts page is ready (Create a post visible).
+ */
+export async function watchMailerLiteSetupProgress(page, siteId, { timeoutMs = 15 * 60 * 1000 } = {}) {
+  const seen = new Set(["started"]);
+  logSetupStep(SETUP_STEPS[0], page.url());
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const current = await detectSetupStep(page, siteId);
+    if (current && !seen.has(current)) {
+      seen.add(current);
+      const step = SETUP_STEPS.find((s) => s.key === current);
+      if (step) logSetupStep(step, page.url());
+      if (current === "ready") return { ok: true, steps: [...seen] };
+    }
+    await page.waitForTimeout(1200);
+  }
+
+  const err = new Error(
+    "Timed out waiting for MailerLite blog page. Open Sites → Tech2globe → Blog → Posts, then re-run save-session.",
+  );
+  err.status = 408;
+  throw err;
+}
+
+/**
+ * Manual session save (xvfb-run). Tracks each step while you log in, then auto-saves.
+ */
+export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch = true } = {}) {
+  const settings = await settingsModel.getSettingsWithSecrets();
+  const siteId = settings.mailerlite_site_id || "196949098888169226";
+  ensureDirs();
+
+  const browser = await chromium.launch({
+    headless: false,
+    timeout: 30000,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
+  });
+
+  try {
+    const context = await browser.newContext(getBotContextOptions());
+    const page = await context.newPage();
+    const blogUrl = `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`;
+
+    console.log("\n[blog-2.0-setup] Follow along in the browser. Steps will print below:\n");
+
+    await gotoPage(page, blogUrl, "blog (save session)");
+
+    if (autoWatch && typeof waitForUser !== "function") {
+      await watchMailerLiteSetupProgress(page, siteId);
+    } else if (autoWatch) {
+      const watchPromise = watchMailerLiteSetupProgress(page, siteId);
+      console.log(
+        "\n[blog-2.0-setup] Log in and navigate to Blog → Posts. " +
+          "Steps update automatically. Press Enter when done OR wait for Step 6/7.\n",
+      );
+      await Promise.race([
+        watchPromise,
+        waitForUser("Press Enter to save session now (or wait for auto-detect)… "),
+      ]);
+    } else if (typeof waitForUser === "function") {
+      await waitForUser(
+        "\nLog into MailerLite if prompted. When you see Create a post, press Enter…\n",
+      );
+    }
+
+    logStep("Verifying blog access before saving session");
+    await openBlogList(page, siteId);
+    await context.storageState({ path: SESSION_FILE });
+    logSetupStep(SETUP_STEPS[6], SESSION_FILE);
+    logStep(`Session saved to ${SESSION_FILE}`);
+    return { ok: true, path: SESSION_FILE, url: page.url() };
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+export const BOT_RUNTIME_VERSION = "2026-09-29-c";
