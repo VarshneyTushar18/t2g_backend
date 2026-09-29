@@ -1,4 +1,6 @@
+import { spawn } from "child_process";
 import fs from "fs";
+import net from "net";
 import path from "path";
 import { chromium } from "playwright";
 import * as settingsModel from "./blog20.model.js";
@@ -77,8 +79,47 @@ function hasSavedLogin() {
   return hasBrowserProfile() || fs.existsSync(SESSION_FILE);
 }
 
+function shouldUseInstalledChrome({ headed, useChromeChannel } = {}) {
+  if (process.env.BLOG20_USE_CHROME === "0") return false;
+  return (
+    useChromeChannel ||
+    process.env.BLOG20_USE_CHROME === "1" ||
+    (process.platform === "win32" && headed)
+  );
+}
+
+function buildPersistentContextOptions({ headed, useChromeChannel } = {}) {
+  const useChrome = shouldUseInstalledChrome({ headed, useChromeChannel });
+  const options = {
+    headless: !headed,
+    timeout: 30000,
+    viewport: { width: 1366, height: 900 },
+    locale: "en-US",
+    timezoneId: "America/New_York",
+  };
+
+  if (useChrome) {
+    options.channel = process.env.BLOG20_CHROME_CHANNEL || "chrome";
+    if (process.platform === "win32" && headed) {
+      // No Playwright flags (--no-sandbox etc.) — Cloudflare Turnstile rejects them.
+      options.ignoreDefaultArgs = true;
+      options.args = [];
+    } else {
+      options.ignoreDefaultArgs = ["--enable-automation"];
+    }
+  } else {
+    options.args =
+      headed && process.platform === "win32"
+        ? ["--disable-dev-shm-usage"]
+        : BROWSER_ARGS;
+    options.userAgent = BOT_USER_AGENT;
+  }
+
+  return { options, useChrome };
+}
+
 /** Persistent browser profile — keeps MailerLite login across runs (more reliable than JSON cookies). */
-async function launchBotContext({ headedOverride } = {}) {
+async function launchBotContext({ headedOverride, useChromeChannel } = {}) {
   const headed =
     headedOverride !== undefined ? headedOverride : useHeadedBrowser();
   if (!headed && hasSavedLogin()) {
@@ -87,14 +128,124 @@ async function launchBotContext({ headedOverride } = {}) {
     );
   }
   ensureDirs();
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
-    headless: !headed,
-    timeout: 30000,
-    args: BROWSER_ARGS,
-    ...getBotContextOptions(),
+  const { options, useChrome } = buildPersistentContextOptions({
+    headed,
+    useChromeChannel,
   });
+  if (useChrome) {
+    logStep(
+      `Using installed ${options.channel} (better Cloudflare/Turnstile than bundled Chromium)`,
+    );
+  }
+  const context = await chromium.launchPersistentContext(PROFILE_DIR, options);
   const page = context.pages()[0] || await context.newPage();
-  return { context, page, headed };
+  return {
+    context,
+    page,
+    headed,
+    close: async () => {
+      await context.close().catch(() => {});
+    },
+  };
+}
+
+const SAVE_SESSION_CDP_PORT = Number(process.env.BLOG20_CDP_PORT) || 9333;
+
+function findWindowsChrome() {
+  const candidates = [
+    process.env.BLOG20_CHROME_PATH,
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    path.join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function waitForTcpPort(port, host = "127.0.0.1", timeoutMs = 45000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const attempt = () => {
+      const socket = net.connect({ port, host }, () => {
+        socket.end();
+        resolve();
+      });
+      socket.on("error", () => {
+        if (Date.now() - started > timeoutMs) {
+          reject(new Error(`Timed out waiting for Chrome on port ${port}`));
+          return;
+        }
+        setTimeout(attempt, 250);
+      });
+    };
+    attempt();
+  });
+}
+
+/** Windows: spawn real Chrome (no Playwright flags) and attach over CDP for Cloudflare-friendly login. */
+async function launchWindowsChromeCdpContext() {
+  const chromePath = findWindowsChrome();
+  if (!chromePath) {
+    const err = new Error(
+      "Google Chrome not found. Install Chrome or set BLOG20_CHROME_PATH to chrome.exe",
+    );
+    err.status = 500;
+    throw err;
+  }
+
+  ensureDirs();
+  const port = SAVE_SESSION_CDP_PORT;
+  const args = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${PROFILE_DIR}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "about:blank",
+  ];
+
+  logStep(`Opening Google Chrome for manual login (no automation flags, CDP ${port})`);
+  const chromeProc = spawn(chromePath, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  });
+  chromeProc.unref();
+
+  await waitForTcpPort(port);
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  const context = browser.contexts()[0];
+  if (!context) {
+    const err = new Error("Chrome started but Playwright could not attach a browser context");
+    err.status = 500;
+    throw err;
+  }
+  const page = context.pages()[0] || await context.newPage();
+
+  return {
+    context,
+    page,
+    headed: true,
+    close: async () => {
+      await browser.close().catch(() => {});
+      if (chromeProc.pid) {
+        spawn("taskkill", ["/PID", String(chromeProc.pid), "/T", "/F"], {
+          stdio: "ignore",
+        });
+      }
+    },
+  };
+}
+
+async function launchSaveSessionContext() {
+  if (process.platform === "win32" && process.env.BLOG20_CDP_SAVE !== "0") {
+    return await launchWindowsChromeCdpContext();
+  }
+  return await launchBotContext({
+    headedOverride: true,
+    useChromeChannel: true,
+  });
 }
 
 export const BOT_USER_AGENT =
@@ -399,6 +550,52 @@ async function loginIfNeeded(page, { email, password }) {
   await page.context().storageState({ path: SESSION_FILE });
 }
 
+function buildBlogUrls(siteId) {
+  return [
+    `https://dashboard.mailerlite.com/sites/${siteId}/blog`,
+    `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`,
+    `https://dashboard.mailerlite.com/sites/${siteId}`,
+  ];
+}
+
+async function isMailerLite404Page(page) {
+  if (!page.url().includes("dashboard.mailerlite.com")) return false;
+  return (
+    page
+      .locator("text=404 Error")
+      .first()
+      .isVisible({ timeout: 600 })
+      .catch(() => false) ||
+    page
+      .locator("h1:has-text('Looks like you got lost')")
+      .first()
+      .isVisible({ timeout: 600 })
+      .catch(() => false)
+  );
+}
+
+async function navigateToBlogViaSitesUi(page) {
+  logStep("Opening Sites list — pick your website, then Blog");
+  await gotoPage(page, "https://dashboard.mailerlite.com/sites", "sites list");
+  await dismissOverlays(page);
+
+  const siteLink = page.locator('a[href*="/sites/"]').first();
+  if (await siteLink.isVisible({ timeout: 8000 }).catch(() => false)) {
+    await siteLink.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+  }
+
+  const blogNav = page
+    .locator('a[href*="/blog"], [role="tab"]:has-text("Blog"), nav a:has-text("Blog")')
+    .first();
+  if (await blogNav.isVisible({ timeout: 8000 }).catch(() => false)) {
+    logStep("Opening Blog section from site navigation");
+    await blogNav.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+  }
+}
+
 async function findCreatePostButton(page, { timeout = 60000, click = true } = {}) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -423,13 +620,14 @@ async function findCreatePostButton(page, { timeout = 60000, click = true } = {}
 }
 
 async function ensureBlogPostsPage(page, siteId) {
-  const urls = [
-    `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`,
-    `https://dashboard.mailerlite.com/sites/${siteId}/blog`,
-  ];
+  const urls = buildBlogUrls(siteId);
 
   for (const url of urls) {
     await gotoPage(page, url, "blog posts");
+    if (await isMailerLite404Page(page)) {
+      logStep(`MailerLite 404 at ${url}`);
+      continue;
+    }
     await dismissOverlays(page);
 
     const blogTab = page
@@ -450,9 +648,18 @@ async function ensureBlogPostsPage(page, siteId) {
     }
   }
 
+  await navigateToBlogViaSitesUi(page);
+  const viaUi = await findCreatePostButton(page, { timeout: 12000, click: false });
+  if (viaUi) {
+    logStep(`Blog posts page ready via Sites UI (${page.url()})`);
+    return;
+  }
+
   await captureDebug(page, "blog-posts-page-missing");
   const err = new Error(
-    `Could not open MailerLite blog posts page (current URL: ${page.url()}). Confirm site ID ${siteId} and bot account access.`,
+    `Could not open MailerLite blog posts page (current URL: ${page.url()}). ` +
+      `Site ID ${siteId} may be wrong, or this account has no website/blog yet. ` +
+      `In MailerLite go to Sites, open the client website, then Blog — copy the site ID from the URL.`,
   );
   err.status = 500;
   throw err;
@@ -765,14 +972,35 @@ async function hasVisibleLoginForm(page) {
     .catch(() => false);
 }
 
+async function isMailerLiteVerificationPage(page) {
+  const url = page.url();
+  if (/\/verify-email|\/verify\b|\/mfa|two-factor/i.test(url)) return true;
+  if (
+    await page
+      .locator('text=Login verification')
+      .first()
+      .isVisible({ timeout: 400 })
+      .catch(() => false)
+  ) {
+    return true;
+  }
+  return page
+    .locator('button:has-text("Send email code")')
+    .first()
+    .isVisible({ timeout: 400 })
+    .catch(() => false);
+}
+
 async function detectSetupStep(page, siteId) {
   const url = page.url();
+  if (await isMailerLite404Page(page)) return "lost";
   if (url.includes("/login")) return "login";
+  if (await isMailerLiteVerificationPage(page)) return "verify";
   if (url.includes("accounts.mailerlite.com")) {
     if (await hasVisibleLoginForm(page)) return "login";
     return "accounts";
   }
-  if (url.includes("dashboard.mailerlite.com") && url.includes(`/sites/${siteId}/blog`)) {
+  if (url.includes("dashboard.mailerlite.com") && url.includes("/blog")) {
     const hasCreate = await findCreatePostButton(page, { timeout: 1500, click: false });
     if (hasCreate) return "ready";
     return "blog";
@@ -782,9 +1010,13 @@ async function detectSetupStep(page, siteId) {
 }
 
 async function autoOpenBlogFromAccounts(page, siteId) {
-  const blogUrl = `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`;
+  if (await isMailerLite404Page(page)) return;
   logStep("Auto-opening blog URL (accounts portal does not redirect automatically)");
-  await gotoPage(page, blogUrl, "auto-open blog");
+  for (const blogUrl of buildBlogUrls(siteId)) {
+    await gotoPage(page, blogUrl, "auto-open blog");
+    if (!(await isMailerLite404Page(page))) return;
+    logStep(`Blog URL 404: ${blogUrl}`);
+  }
   await tryOpenDashboardFromAccounts(page).catch(() => {});
 }
 
@@ -803,11 +1035,15 @@ export async function watchMailerLiteSetupProgress(page, siteId, { timeoutMs = 1
   while (Date.now() < deadline) {
     const url = page.url();
     const current = await detectSetupStep(page, siteId);
+    const onVerification = current === "verify";
+    const onLost = current === "lost";
 
     // Stuck on accounts after login — MailerLite often does not auto-redirect
     if (
       url.includes("accounts.mailerlite.com") &&
       !(await hasVisibleLoginForm(page)) &&
+      !onVerification &&
+      !onLost &&
       Date.now() - lastAutoNavAt > 8000
     ) {
       lastAutoNavAt = Date.now();
@@ -820,7 +1056,20 @@ export async function watchMailerLiteSetupProgress(page, siteId, { timeoutMs = 1
       if (step) logSetupStep(step, page.url());
       if (current === "login") {
         console.log(
-          "[blog-2.0-setup] Login form visible — enter email & password IN THE SERVER BROWSER (not your PC browser).",
+          "[blog-2.0-setup] Login form visible — enter email & password in THIS browser window.",
+        );
+      }
+      if (current === "verify") {
+        console.log(
+          "[blog-2.0-setup] Email OTP required — click Send email code, check inbox/spam, enter code.\n" +
+            "[blog-2.0-setup] Script will NOT redirect while you are on this page.",
+        );
+      }
+      if (current === "lost") {
+        console.log(
+          `[blog-2.0-setup] 404 — site ID ${siteId} not found in this MailerLite account.\n` +
+            "[blog-2.0-setup] Click Back to Dashboard → Sites → open the CLIENT website → Blog.\n" +
+            "[blog-2.0-setup] When you see Create a post, the script will continue (no auto-redirect).",
         );
       }
       if (current === "ready") return { ok: true, steps: [...seen] };
@@ -829,7 +1078,15 @@ export async function watchMailerLiteSetupProgress(page, siteId, { timeoutMs = 1
       const onLogin = await hasVisibleLoginForm(page);
       if (onLogin) {
         console.log(
-          "[blog-2.0-setup] Still on LOGIN page — you must log in inside the server browser (see note below).",
+          "[blog-2.0-setup] Still on LOGIN page — enter credentials in THIS browser window.",
+        );
+      } else if (onVerification) {
+        console.log(
+          "[blog-2.0-setup] Still on email verification — finish OTP here (check spam folder).",
+        );
+      } else if (onLost) {
+        console.log(
+          "[blog-2.0-setup] Still on 404 — navigate manually: Sites → your website → Blog.",
         );
       } else {
         console.log(
@@ -880,13 +1137,20 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
     throw err;
   }
 
-  const { context, page } = await launchBotContext({ headedOverride: true });
+  const session = await launchSaveSessionContext();
+  const { context, page } = session;
 
   try {
-    const blogUrl = `https://dashboard.mailerlite.com/sites/${siteId}/blog/posts`;
-
     console.log("\n[blog-2.0-setup] Follow along in the browser. Steps will print below:\n");
-    console.log(`[blog-2.0-setup] Browser profile: ${PROFILE_DIR}\n`);
+    console.log(`[blog-2.0-setup] Browser profile: ${PROFILE_DIR}`);
+    console.log(`[blog-2.0-setup] Configured site ID: ${siteId}\n`);
+    if (process.platform === "win32") {
+      console.log(
+        "[blog-2.0-setup] Opening real Google Chrome (no --no-sandbox / automation flags).\n" +
+          "[blog-2.0-setup] Close any Chrome window from a previous save-session attempt first.\n" +
+          "[blog-2.0-setup] If Cloudflare still fails: click Troubleshoot, refresh, or try another network.\n",
+      );
+    }
 
     if (process.platform === "linux" && Boolean(process.env.DISPLAY)) {
       console.log(
@@ -904,11 +1168,12 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
       console.log("[blog-2.0-setup] A browser window should open on this PC — log in there.\n");
     }
 
-    await gotoPage(page, blogUrl, "blog (save session)");
+    await gotoPage(page, "https://dashboard.mailerlite.com/dashboard", "MailerLite dashboard");
 
     console.log(
-      "[blog-2.0-setup] Wait for Step 6/7 — script auto-opens blog URL after login.\n" +
-        "[blog-2.0-setup] Do NOT press Enter or Ctrl+C until auto-save.\n",
+      "[blog-2.0-setup] After login: Sites → open the website → Blog → wait for Create a post.\n" +
+        "[blog-2.0-setup] If you see 404, the site ID is wrong — use the site that has the blog.\n" +
+        "[blog-2.0-setup] Do NOT press Ctrl+C until Step 6/7 auto-save.\n",
     );
 
     if (autoWatch) {
@@ -918,14 +1183,17 @@ export async function interactiveSaveMailerLiteSession({ waitForUser, autoWatch 
     }
 
     logStep("Verifying blog access before saving login");
-    await openBlogList(page, siteId);
+    const alreadyReady = await findCreatePostButton(page, { timeout: 4000, click: false });
+    if (!alreadyReady) {
+      await openBlogList(page, siteId);
+    }
     await persistLoginBackup(context);
     logSetupStep(SETUP_STEPS[6], PROFILE_DIR);
     logStep(`Login saved to browser profile: ${PROFILE_DIR}`);
     return { ok: true, profileDir: PROFILE_DIR, sessionFile: SESSION_FILE, url: page.url() };
   } finally {
-    await context.close().catch(() => {});
+    await session.close().catch(() => {});
   }
 }
 
-export const BOT_RUNTIME_VERSION = "2026-09-29-f";
+export const BOT_RUNTIME_VERSION = "2026-09-29-j";
