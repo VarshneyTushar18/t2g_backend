@@ -111,6 +111,33 @@ export async function deleteDraft(req, res) {
   }
 }
 
+export async function deleteDraftsBulk(req, res) {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (!ids.length) {
+      return res.status(400).json({ message: "ids array is required" });
+    }
+    const result = await draftsModel.deleteDraftsByIds(ids);
+    if (!result.deleted.length) {
+      return res.status(404).json({ message: "No drafts found to delete" });
+    }
+    const count = result.deleted.length;
+    let note = `Deleted ${count} draft${count === 1 ? "" : "s"} from Blog-2.0.`;
+    if (result.onMailerLite > 0) {
+      note += ` ${result.onMailerLite} were already on MailerLite — those posts were not removed from the website.`;
+    }
+    res.json({
+      success: true,
+      deleted: result.deleted,
+      not_found: result.notFound,
+      on_mailerlite: result.onMailerLite,
+      note,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Failed to delete drafts" });
+  }
+}
+
 export async function pushDraftToMailerLiteSite(req, res) {
   try {
     const result = await pushDraftToMailerLite(Number(req.params.id), {

@@ -160,6 +160,42 @@ export async function deleteDraftById(id) {
   return draft;
 }
 
+export async function deleteDraftsByIds(ids = []) {
+  const draftIds = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))];
+  if (!draftIds.length) {
+    return { deleted: [], notFound: [], onMailerLite: 0 };
+  }
+
+  const placeholders = draftIds.map(() => "?").join(", ");
+  const [rows] = await blogDb.query(
+    `SELECT id, title, mailerlite_push_status
+     FROM blog_2_0_drafts WHERE id IN (${placeholders})`,
+    draftIds,
+  );
+  const foundIds = rows.map((row) => row.id);
+  const notFound = draftIds.filter((id) => !foundIds.includes(id));
+  if (!foundIds.length) {
+    return { deleted: [], notFound, onMailerLite: 0 };
+  }
+
+  const foundPlaceholders = foundIds.map(() => "?").join(", ");
+  await blogDb.query(
+    `DELETE FROM blog_2_0_draft_approvals WHERE draft_id IN (${foundPlaceholders})`,
+    foundIds,
+  );
+  await blogDb.query(
+    `DELETE FROM blog_2_0_drafts WHERE id IN (${foundPlaceholders})`,
+    foundIds,
+  );
+
+  const onMailerLite = rows.filter((row) => row.mailerlite_push_status === "pushed").length;
+  return {
+    deleted: rows.map((row) => ({ id: row.id, title: row.title })),
+    notFound,
+    onMailerLite,
+  };
+}
+
 export async function listDrafts({ limit = 20 } = {}) {
   const [rows] = await blogDb.query(
     `SELECT id, title, slug, excerpt, status, featured_image, author_name,
