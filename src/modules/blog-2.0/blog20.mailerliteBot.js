@@ -437,6 +437,66 @@ async function captureDebug(page, label) {
   }
 }
 
+async function hasVisibleBlockingOverlay(page) {
+  const selectors = [
+    'div.fixed[class*="bg-opacity-60"]',
+    'div.fixed[class*="bg-black"]',
+    '[class*="z-100"].fixed',
+    '[role="dialog"]',
+  ];
+  for (const selector of selectors) {
+    const el = page.locator(selector).first();
+    if (await el.isVisible({ timeout: 250 }).catch(() => false)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function dismissBlockingModals(page) {
+  for (let round = 0; round < 6; round += 1) {
+    if (!(await hasVisibleBlockingOverlay(page))) break;
+
+    logStep("Dismissing MailerLite modal overlay");
+
+    const dismissPatterns = [
+      /close/i,
+      /not now/i,
+      /skip/i,
+      /maybe later/i,
+      /remind me later/i,
+      /dismiss/i,
+      /no thanks/i,
+      /^cancel$/i,
+      /got it/i,
+      /i understand/i,
+      /later/i,
+    ];
+    for (const pattern of dismissPatterns) {
+      const btn = page.getByRole("button", { name: pattern }).first();
+      if (await btn.isVisible({ timeout: 350 }).catch(() => false)) {
+        await btn.click({ timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(450);
+      }
+    }
+
+    const closeIcons = page.locator(
+      'button[aria-label*="close" i], button[aria-label*="Close"], button:has-text("×")',
+    );
+    const iconCount = await closeIcons.count().catch(() => 0);
+    for (let i = 0; i < iconCount; i += 1) {
+      const icon = closeIcons.nth(i);
+      if (await icon.isVisible({ timeout: 250 }).catch(() => false)) {
+        await icon.click({ timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(450);
+      }
+    }
+
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(450);
+  }
+}
+
 async function dismissOverlays(page) {
   for (const label of ["Accept all", "Accept", "Allow all", "Got it", "I agree"]) {
     const btn = page.locator(`button:has-text("${label}")`).first();
@@ -445,6 +505,33 @@ async function dismissOverlays(page) {
       await page.waitForTimeout(300);
     }
   }
+  await dismissBlockingModals(page);
+}
+
+async function clickLocatorResilient(page, locator, { label = "control", timeout = 15000 } = {}) {
+  const deadline = Date.now() + timeout;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    await dismissOverlays(page);
+    try {
+      await locator.scrollIntoViewIfNeeded().catch(() => {});
+      await locator.click({ timeout: 5000 });
+      return;
+    } catch (err) {
+      lastError = err;
+      const message = String(err?.message || "");
+      if (message.includes("intercepts pointer events") || message.includes("Timeout")) {
+        logStep(`Retrying click on ${label} after overlay interference`);
+        await dismissBlockingModals(page);
+        await page.waitForTimeout(600);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError || new Error(`Could not click ${label}`);
 }
 
 async function fillReactInput(page, locator, value) {
@@ -968,12 +1055,15 @@ async function findCreatePostButton(page, { timeout = 60000, click = true } = {}
       const btn = candidate.first();
       if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
         if (click) {
-          await btn.scrollIntoViewIfNeeded().catch(() => {});
-          await btn.click({ timeout: 10000 });
+          await clickLocatorResilient(page, btn, {
+            label: "Create a post",
+            timeout: 20000,
+          });
         }
         return btn;
       }
     }
+    await dismissOverlays(page);
     await page.waitForTimeout(1000);
   }
   return null;
@@ -1057,10 +1147,11 @@ async function findPostOnBlogList(page, title) {
 }
 
 async function clickEnabledButton(page, labels) {
+  await dismissOverlays(page);
   for (const label of labels) {
     const loose = page.locator(`button:not([disabled]):has-text("${label}")`).first();
     if (await loose.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await loose.click({ timeout: 10000 });
+      await clickLocatorResilient(page, loose, { label, timeout: 15000 });
       return true;
     }
   }
