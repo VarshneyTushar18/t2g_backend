@@ -58,6 +58,7 @@ router.get("/mailerlite/bot/status", ...requireBlog20View, controller.getMailerL
 router.post("/mailerlite/bot/otp", ...requireBlog20Edit, controller.submitMailerLiteBotOtpHandler);
 router.get("/drafts", ...requireBlog20View, controller.listDrafts);
 router.get("/drafts/:id", ...requireBlog20View, controller.getDraft);
+router.delete("/drafts/:id", ...requireBlog20Edit, controller.deleteDraft);
 router.post(
   "/drafts/:id/push-mailerlite",
   ...requireBlog20Edit,

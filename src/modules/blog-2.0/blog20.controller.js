@@ -90,6 +90,23 @@ export async function getDraft(req, res) {
   }
 }
 
+export async function deleteDraft(req, res) {
+  try {
+    const draft = await draftsModel.deleteDraftById(req.params.id);
+    if (!draft) return res.status(404).json({ message: "Draft not found" });
+    res.json({
+      success: true,
+      deleted_id: draft.id,
+      note:
+        draft.mailerlite_push_status === "pushed"
+          ? "Removed from Blog-2.0 Admin only. The post on MailerLite was not deleted."
+          : "Draft deleted from Blog-2.0.",
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Failed to delete draft" });
+  }
+}
+
 export async function pushDraftToMailerLiteSite(req, res) {
   try {
     const result = await pushDraftToMailerLite(Number(req.params.id), {

@@ -148,6 +148,18 @@ export async function getDraftById(id) {
   return draft;
 }
 
+export async function deleteDraftById(id) {
+  const draftId = Number(id);
+  const draft = await getDraftById(draftId);
+  if (!draft) return null;
+  await blogDb.query(
+    `DELETE FROM blog_2_0_draft_approvals WHERE draft_id = ?`,
+    [draftId],
+  );
+  await blogDb.query(`DELETE FROM blog_2_0_drafts WHERE id = ?`, [draftId]);
+  return draft;
+}
+
 export async function listDrafts({ limit = 20 } = {}) {
   const [rows] = await blogDb.query(
     `SELECT id, title, slug, excerpt, status, featured_image, author_name,
