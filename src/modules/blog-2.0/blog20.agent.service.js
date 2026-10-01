@@ -34,21 +34,44 @@ function buildRunInput(history, userMessage) {
 
 function parseToolOutput(raw) {
   if (raw == null) return null;
-  if (typeof raw === "string") {
+  let output = raw;
+  if (typeof output === "string") {
     try {
-      return JSON.parse(raw);
+      output = JSON.parse(output);
     } catch {
       return null;
     }
   }
-  return raw;
+  if (output?.text && typeof output.text === "string") {
+    try {
+      output = JSON.parse(output.text);
+    } catch {
+      /* keep as-is */
+    }
+  }
+  return output;
 }
 
 function extractDrafts(result) {
   const posts = [];
   const seen = new Set();
-  for (const item of result?.newItems || []) {
-    const output = parseToolOutput(item?.output ?? item?.rawItem?.output);
+  const items = [
+    ...(Array.isArray(result?.newItems) ? result.newItems : []),
+    ...(Array.isArray(result?.items) ? result.items : []),
+  ];
+  for (const item of items) {
+    const type = item?.type || item?.rawItem?.type;
+    if (
+      type &&
+      type !== "tool_call_output_item" &&
+      type !== "function_call_result" &&
+      type !== "tool_result"
+    ) {
+      continue;
+    }
+    const output = parseToolOutput(
+      item?.output ?? item?.rawItem?.output ?? item?.result,
+    );
     if (output?.ok && output.id && output.project === "blog_2_0" && !seen.has(output.id)) {
       seen.add(output.id);
       posts.push(output);
@@ -88,7 +111,21 @@ function buildSystemContext({ guidelines, settings }) {
 MailerLite email campaign will be created separately after draft approval.`;
 }
 
-export async function runBlog20Agent({ user, threadId, message }) {
+const REVISION_MODE_INSTRUCTIONS = `
+
+## REVISION MODE (mandatory — approver sent feedback)
+- An approver rejected the previous draft — write a NEW complete blog NOW
+- Do NOT ask clarifying questions or wait for confirmation
+- You MUST call create_bright_crm_blog_draft exactly once with full title, excerpt, and HTML body
+- If feedback is vague (e.g. "something new"), use a fresh angle and structure on the same topic
+- Never reply with only chat text — saving via the tool is required`;
+
+export async function runBlog20Agent({
+  user,
+  threadId,
+  message,
+  revisionMode = false,
+}) {
   await refreshConfiguredFlag();
   if (!isAgentConfigured()) {
     const err = new Error(
@@ -101,7 +138,6 @@ export async function runBlog20Agent({ user, threadId, message }) {
   await ensureBrightCrmGuidelines();
 
   const userId = user.sub || user.id || "unknown";
-  const permissions = user.permissions?.blog_2_0 || user.permissions?.blog || {};
   const humanizePercent = 70;
 
   const [guidelines, settings, history] = await Promise.all([
@@ -116,12 +152,20 @@ export async function runBlog20Agent({ user, threadId, message }) {
     humanizePercent,
   });
 
+  let instructions = buildSystemContext({ guidelines, settings });
+  if (revisionMode) {
+    instructions += REVISION_MODE_INSTRUCTIONS;
+  }
+
   const agent = new Agent({
     name: "Bright CRM Blog Agent",
-    instructions: buildSystemContext({ guidelines, settings }),
+    instructions,
     model: getDefaultModel(),
     tools,
-    modelSettings: { maxTokens: 4500, temperature: 0.75 },
+    modelSettings: {
+      maxTokens: 4500,
+      temperature: revisionMode ? 0.65 : 0.75,
+    },
   });
 
   const started = Date.now();
@@ -229,23 +273,55 @@ export async function regenerateBlog20DraftFromFeedback({ draft, feedback }) {
     threadId = thread.id;
   }
 
-  const message = `The approver rejected the previous blog draft and wants a NEW version.
+  const message = `REVISION REQUEST — write and save immediately.
 
 Previous draft #${draft.id}: "${draft.title}"
 
-Approver feedback (follow this closely):
+Approver feedback:
 ${feedback}
 
-Write an improved blog post addressing this feedback. Use create_bright_crm_blog_draft to save the new version. Use a fresh angle if needed. Do not mention that this is a revision unless helpful for the reader.`;
+Write a completely NEW blog post (new angle/structure if feedback is vague). Call create_bright_crm_blog_draft with the full article. Do not ask questions.`;
 
   await blogAgentModel.addMessage({ threadId, role: "user", content: message });
-  const runResult = await runBlog20Agent({ user, threadId, message });
+  let runResult = await runBlog20Agent({
+    user,
+    threadId,
+    message,
+    revisionMode: true,
+  });
+
+  if (!runResult.posts?.length) {
+    console.warn(
+      `[blog20-revision] First pass saved no draft for #${draft.id} — retrying`,
+    );
+    const retryMessage = `You did not call create_bright_crm_blog_draft yet. Call it NOW with a full revised blog for topic "${draft.title}". Feedback: ${feedback}. Save the complete HTML body — no questions.`;
+    await blogAgentModel.addMessage({ threadId, role: "user", content: retryMessage });
+    runResult = await runBlog20Agent({
+      user,
+      threadId,
+      message: retryMessage,
+      revisionMode: true,
+    });
+  }
+
   await blogAgentModel.addMessage({
     threadId,
     role: "assistant",
     content: runResult.output,
-    toolOutput: { durationMs: runResult.durationMs, posts: runResult.posts, revision: true },
+    toolOutput: {
+      durationMs: runResult.durationMs,
+      posts: runResult.posts,
+      revision: true,
+    },
   });
+
+  if (!runResult.posts?.length) {
+    const err = new Error(
+      "AI completed but did not save a new draft. Try Blog Agent manually with clearer feedback.",
+    );
+    err.status = 502;
+    throw err;
+  }
 
   return {
     threadId,

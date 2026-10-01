@@ -72,21 +72,19 @@ function runRevisionInBackground({ approval, draft, feedback, actorEmail }) {
         ...parseEmails(approval.requester_email),
       ];
       const newDraft = result.posts?.[0];
-      await sendHtmlEmail({
-        to: recipients,
-        subject: newDraft
-          ? `[Blog-2.0] New AI draft ready for review: ${newDraft.title}`
-          : `[Blog-2.0] AI revision finished for: ${draft.title}`,
-        html: `<p style="font-family:Segoe UI,Arial,sans-serif;line-height:1.6;">
-          The approver requested changes to <strong>${escapeHtml(draft.title)}</strong>.<br/><br/>
-          <strong>Feedback:</strong> ${escapeHtml(feedback)}<br/><br/>
-          ${
-            newDraft
-              ? `A new draft <strong>#${newDraft.id}</strong> was created. Check your inbox for a fresh approval email, or open Blog-2.0 → Drafts in Admin.`
-              : `The AI agent finished but did not save a new draft. Open Blog-2.0 → Blog Agent to continue manually.`
-          }
-        </p>`,
-      });
+      const approvalSent = Boolean(newDraft?.approval?.approvalId);
+      if (newDraft && !approvalSent) {
+        await sendHtmlEmail({
+          to: recipients,
+          subject: `[Blog-2.0] New AI draft ready for review: ${newDraft.title}`,
+          html: `<p style="font-family:Segoe UI,Arial,sans-serif;line-height:1.6;">
+            Revision complete for <strong>${escapeHtml(draft.title)}</strong>.<br/><br/>
+            <strong>Feedback:</strong> ${escapeHtml(feedback)}<br/><br/>
+            New draft <strong>#${newDraft.id}</strong> — "${escapeHtml(newDraft.title)}" — is in Blog-2.0 Admin → Drafts.
+            Send approval email from Drafts if the team did not receive one automatically.
+          </p>`,
+        });
+      }
     } catch (err) {
       console.error("[blog20-approval] revision failed:", err.message);
       try {
