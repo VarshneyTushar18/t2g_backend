@@ -11,6 +11,14 @@ import * as settingsModel from "./blog20.model.js";
 
 const AGENT_TYPE = "blog_2_0";
 const GUIDELINES_ID = 2;
+const AGENT_MAX_TURNS = 25;
+const GENERIC_THREAD_TITLES = new Set(["blog-2.0 chat", "new chat"]);
+
+const WRITE_NOW_PATTERNS = [
+  /^(ok|okay|yes|yep|sure|confirm|confirmed|go ahead|proceed|generate|write it|just write|do it|start writing|create (the )?blog|generate blog)\.?$/i,
+  /^(please )?(write|generate|create|draft|save)\b/i,
+  /\b(just write it|write now|don'?t ask|no questions)\b/i,
+];
 
 const DEFAULT_BRIGHT_CRM_GUIDELINES = `Bright CRM Blog Agent (Blog-2.0):
 - Client: Bright CRM — construction CRM & project management (NOT Tech2Globe)
@@ -27,9 +35,47 @@ function buildRunInput(history, userMessage) {
     if (msg.role === "system") continue;
     lines.push(`${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}`);
   }
-  lines.push(`User: ${userMessage}`);
+  const trimmed = String(userMessage || "").trim();
+  const last = history[history.length - 1];
+  const alreadyInHistory =
+    last?.role === "user" && String(last.content || "").trim() === trimmed;
+  if (trimmed && !alreadyInHistory) {
+    lines.push(`User: ${trimmed}`);
+  }
   lines.push("Assistant:");
   return lines.join("\n\n");
+}
+
+function isGenericThreadTitle(title) {
+  const normalized = String(title || "").trim().toLowerCase();
+  return !normalized || GENERIC_THREAD_TITLES.has(normalized);
+}
+
+function isConfirmOrWriteCommand(message) {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  return WRITE_NOW_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function hasBlogBrief(message) {
+  const text = String(message || "").trim();
+  if (text.length < 35) return false;
+  return /\b(write|blog|draft|topic|title|about|crm|keyword|audience|seo)\b/i.test(text);
+}
+
+function shouldWriteNow(message) {
+  return isConfirmOrWriteCommand(message) || hasBlogBrief(message);
+}
+
+function augmentMessageForAgent(message) {
+  const text = String(message || "").trim();
+  if (isConfirmOrWriteCommand(text)) {
+    return `${text}\n\n[Write NOW: User confirmed. Call create_bright_crm_blog_draft immediately with the full HTML blog from this conversation. Do not ask questions.]`;
+  }
+  if (hasBlogBrief(text)) {
+    return `${text}\n\n[Write-first: If enough detail is present, call create_bright_crm_blog_draft in this turn. Use defaults for anything missing — author "Bright CRM Team", construction SMB audience.]`;
+  }
+  return text;
 }
 
 function parseToolOutput(raw) {
@@ -104,12 +150,22 @@ function buildSystemContext({ guidelines, settings }) {
 - If auto-push is enabled in settings, bot pushes immediately without email approval
 - NEVER say the post is live on the client website until a human Publishes in MailerLite
 - NEVER use a fake MailerLite preview URL — only mention Admin → Blog-2.0 → Drafts or the approval email preview link
-- Ask-first workflow: topic, audience, author, SEO keyword, competitor/reference link, images
-- Wait for confirm before writing unless user says "just write it"
+- Write-first workflow: when the user gives a topic, title, or brief — write the full blog IMMEDIATELY
+- Defaults: author "Bright CRM Team", audience = construction SMBs, infer SEO keyword from title
+- Do NOT run a long Q&A checklist before writing — ask at most ONE short question only if the message has zero topic
+- When user says ok/confirm/yes/go ahead/generate/write it, use prior messages and save the blog NOW
+- You MUST call create_bright_crm_blog_draft to save — never reply with only a plan, outline, or "shall I proceed?"
+- After save, briefly confirm draft id and that the approval email was sent (when configured)
 
 ## Newsletter (Phase 2)
 MailerLite email campaign will be created separately after draft approval.`;
 }
+
+const WRITE_NOW_MODE_INSTRUCTIONS = `
+
+## WRITE NOW (this turn)
+- User wants the blog written and saved in this turn — no more questions
+- Call create_bright_crm_blog_draft once with complete title, excerpt, and HTML body`;
 
 const REVISION_MODE_INSTRUCTIONS = `
 
@@ -125,6 +181,7 @@ export async function runBlog20Agent({
   threadId,
   message,
   revisionMode = false,
+  writeNowMode = false,
 }) {
   await refreshConfiguredFlag();
   if (!isAgentConfigured()) {
@@ -155,7 +212,11 @@ export async function runBlog20Agent({
   let instructions = buildSystemContext({ guidelines, settings });
   if (revisionMode) {
     instructions += REVISION_MODE_INSTRUCTIONS;
+  } else if (writeNowMode) {
+    instructions += WRITE_NOW_MODE_INSTRUCTIONS;
   }
+
+  const agentMessage = revisionMode ? message : augmentMessageForAgent(message);
 
   const agent = new Agent({
     name: "Bright CRM Blog Agent",
@@ -164,12 +225,14 @@ export async function runBlog20Agent({
     tools,
     modelSettings: {
       maxTokens: 4500,
-      temperature: revisionMode ? 0.65 : 0.75,
+      temperature: revisionMode || writeNowMode ? 0.65 : 0.75,
     },
   });
 
   const started = Date.now();
-  const result = await run(agent, buildRunInput(history, message));
+  const result = await run(agent, buildRunInput(history, agentMessage), {
+    maxTurns: AGENT_MAX_TURNS,
+  });
   return {
     output: result.finalOutput || "Done.",
     durationMs: Date.now() - started,
@@ -194,15 +257,35 @@ export async function sendMessage({ user, threadId, message }) {
   }
 
   await blogAgentModel.addMessage({ threadId, role: "user", content: trimmed });
-  if (!thread.title) {
+  if (isGenericThreadTitle(thread.title)) {
     await blogAgentModel.updateThreadTitle(
       threadId,
       trimmed.slice(0, 60) + (trimmed.length > 60 ? "…" : ""),
     );
   }
 
+  const writeNow = shouldWriteNow(trimmed);
+
   try {
-    const runResult = await runBlog20Agent({ user, threadId, message: trimmed });
+    let runResult = await runBlog20Agent({
+      user,
+      threadId,
+      message: trimmed,
+      writeNowMode: writeNow,
+    });
+
+    if (!runResult.posts?.length && writeNow) {
+      const retryMessage =
+        "Call create_bright_crm_blog_draft NOW with the full blog HTML from our conversation. Save the draft — no questions.";
+      await blogAgentModel.addMessage({ threadId, role: "user", content: retryMessage });
+      runResult = await runBlog20Agent({
+        user,
+        threadId,
+        message: retryMessage,
+        writeNowMode: true,
+      });
+    }
+
     const assistantMsg = await blogAgentModel.addMessage({
       threadId,
       role: "assistant",
