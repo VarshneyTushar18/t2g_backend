@@ -58,6 +58,7 @@ export function buildBlog20DecisionUrls(approvalId, expiresAt) {
       approveUrl: null,
       approveDraftUrl: null,
       approvePublishUrl: null,
+      reviseUrl: null,
       rejectUrl: null,
       previewUrl: null,
       missingBase: true,
@@ -67,14 +68,18 @@ export function buildBlog20DecisionUrls(approvalId, expiresAt) {
   const approveDraft = signBlog20ApprovalToken(approvalId, "approve_draft", expiresAt);
   const approvePublish = signBlog20ApprovalToken(approvalId, "approve_publish", expiresAt);
   const approveLegacy = signBlog20ApprovalToken(approvalId, "approve", expiresAt);
+  const revise = signBlog20ApprovalToken(approvalId, "revise", expiresAt);
   const reject = signBlog20ApprovalToken(approvalId, "reject", expiresAt);
   const preview = signBlog20ApprovalToken(approvalId, "preview", expiresAt);
   const approveDraftUrl = `${root}?token=${encodeURIComponent(approveDraft)}`;
   const approvePublishUrl = `${root}?token=${encodeURIComponent(approvePublish)}`;
+  const reviseBase = base.replace(/\/$/, "");
+  const reviseUrl = `${reviseBase}/api/blog-2.0/approvals/revise?token=${encodeURIComponent(revise)}`;
   return {
     approveUrl: approveDraftUrl,
     approveDraftUrl,
     approvePublishUrl,
+    reviseUrl,
     approveLegacyUrl: `${root}?token=${encodeURIComponent(approveLegacy)}`,
     rejectUrl: `${root}?token=${encodeURIComponent(reject)}`,
     previewUrl: `${root}?token=${encodeURIComponent(preview)}`,
@@ -141,6 +146,7 @@ function draftSummaryBlock(draft, clientBlogUrl) {
 function ctaButtons({
   approveDraftUrl,
   approvePublishUrl,
+  reviseUrl,
   rejectUrl,
   previewUrl,
   allowDirectPublish = true,
@@ -152,9 +158,10 @@ function ctaButtons({
         </td>
       </tr>`
     : "";
-  const tip = allowDirectPublish
-    ? "Save as draft → MailerLite draft (publish later). Publish live → bot clicks Publish on the website. No → stays in Admin only."
-    : "Save as draft → bot creates draft on MailerLite. No → stays in Admin only.";
+  const rejectNum = allowDirectPublish ? "5" : "4";
+  const reviseNum = allowDirectPublish ? "4" : "3";
+  const tip =
+    "Not happy? Request AI revision → new draft + fresh approval email. Reject → no rewrite.";
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" style="margin:8px 0 18px;">
       <tr>
@@ -169,8 +176,13 @@ function ctaButtons({
       </tr>
       ${publishRow}
       <tr>
+        <td style="padding-right:10px;padding-bottom:10px;">
+          <a href="${reviseUrl}" style="display:inline-block;background:#d97706;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">${reviseNum}. Request AI revision</a>
+        </td>
+      </tr>
+      <tr>
         <td style="padding-bottom:10px;">
-          <a href="${rejectUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">${allowDirectPublish ? "4" : "3"}. No — reject</a>
+          <a href="${rejectUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">${rejectNum}. Reject (no rewrite)</a>
         </td>
       </tr>
     </table>
@@ -183,6 +195,7 @@ export function buildBlog20ApprovalRequestEmail({
   clientBlogUrl,
   approveDraftUrl,
   approvePublishUrl,
+  reviseUrl,
   rejectUrl,
   previewUrl,
   requesterEmail,
@@ -195,7 +208,7 @@ export function buildBlog20ApprovalRequestEmail({
     : `Approve blog: “${draft.title}”?`;
   const intro = isReminder
     ? `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Reminder — a Bright CRM blog draft is waiting for your decision.</p>`
-    : `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">A new blog draft is ready. Preview it, then choose <strong>Save as draft</strong>${allowDirectPublish ? " or <strong>Publish live</strong>" : ""} on the MailerLite website, or <strong>No</strong> to reject.</p>`;
+    : `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">A new blog draft is ready. Preview it, approve for MailerLite${allowDirectPublish ? " (draft or live)" : ""}, or <strong>Request AI revision</strong> if you want a new AI-written version.</p>`;
 
   const bodyHtml = `
     ${intro}
@@ -208,6 +221,7 @@ export function buildBlog20ApprovalRequestEmail({
     ${ctaButtons({
       approveDraftUrl,
       approvePublishUrl,
+      reviseUrl,
       rejectUrl,
       previewUrl,
       allowDirectPublish,
@@ -289,12 +303,15 @@ export function renderBlog20DecisionPage({
   mailerLiteUrl = null,
 }) {
   const approved = decision === "approved";
-  const color = !ok ? "#b45309" : approved ? "#15803d" : "#b91c1c";
+  const revision = decision === "revision_requested";
+  const color = !ok ? "#b45309" : approved || revision ? "#15803d" : "#b91c1c";
   const headline = !ok
     ? "Unable to complete"
-    : approved
-      ? "Approved — bot started"
-      : "Kept as draft";
+    : revision
+      ? "AI revision started"
+      : approved
+        ? "Approved — bot started"
+        : "Rejected";
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -318,6 +335,7 @@ export function renderBlog20PreviewPage({
   draft,
   approveDraftUrl,
   approvePublishUrl,
+  reviseUrl,
   rejectUrl,
   decision,
   expiresAt,
@@ -338,6 +356,7 @@ export function renderBlog20PreviewPage({
     .bar a { font-family:Segoe UI,Arial,sans-serif; text-decoration:none; padding:10px 14px; border-radius:8px; font-weight:700; font-size:13px; }
     .yes { background:#16a34a; color:#fff; }
     .publish { background:#0d9488; color:#fff; }
+    .revise { background:#d97706; color:#fff; }
     .no { background:#dc2626; color:#fff; }
     .closed { font-family:Segoe UI,Arial,sans-serif; background:#334155; color:#fff; padding:10px 14px; border-radius:8px; }
     .wrap { max-width:760px; margin:28px auto 48px; padding:0 16px; }
@@ -366,6 +385,7 @@ export function renderBlog20PreviewPage({
         pending
           ? `<a class="yes" href="${approveDraftUrl}">Save as draft</a>
              ${allowDirectPublish ? `<a class="publish" href="${approvePublishUrl}">Publish live</a>` : ""}
+             <a class="revise" href="${reviseUrl}">Request AI revision</a>
              <a class="no" href="${rejectUrl}">Reject</a>`
           : `<span class="closed">Request already ${escapeHtml(decision)}</span>`
       }

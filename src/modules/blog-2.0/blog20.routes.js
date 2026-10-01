@@ -47,6 +47,8 @@ router.use(requireBlogDb);
 
 // Public Yes/No/Preview links from approval emails (no admin auth)
 router.get("/approvals/go", controller.goBlog20Approval);
+router.get("/approvals/revise", controller.showBlog20RevisionFormHandler);
+router.post("/approvals/revise", controller.submitBlog20RevisionHandler);
 
 router.get("/overview", ...requireBlog20View, controller.getOverview);
 router.get("/checklist", ...requireBlog20View, controller.getChecklist);

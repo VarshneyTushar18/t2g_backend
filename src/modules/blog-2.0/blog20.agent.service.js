@@ -196,3 +196,60 @@ export async function createThread({ userId, userEmail, title }) {
     agentType: AGENT_TYPE,
   });
 }
+
+const APPROVAL_SYSTEM_USER = {
+  sub: "blog20-approval",
+  id: "blog20-approval",
+  email: "blog-2.0-approval@system.local",
+};
+
+/**
+ * Approver sent back feedback — AI writes a new draft (approval email sent by tool if configured).
+ */
+export async function regenerateBlog20DraftFromFeedback({ draft, feedback }) {
+  const ownerId = draft.created_by || APPROVAL_SYSTEM_USER.id;
+  const user = {
+    sub: ownerId,
+    id: ownerId,
+    email: APPROVAL_SYSTEM_USER.email,
+  };
+
+  let threadId = draft.thread_id || null;
+  if (threadId) {
+    const thread = await blogAgentModel.getThread(threadId, ownerId);
+    if (!thread) threadId = null;
+  }
+  if (!threadId) {
+    const thread = await blogAgentModel.createThread({
+      userId: ownerId,
+      userEmail: user.email,
+      title: `Revision: ${draft.title}`.slice(0, 80),
+      agentType: AGENT_TYPE,
+    });
+    threadId = thread.id;
+  }
+
+  const message = `The approver rejected the previous blog draft and wants a NEW version.
+
+Previous draft #${draft.id}: "${draft.title}"
+
+Approver feedback (follow this closely):
+${feedback}
+
+Write an improved blog post addressing this feedback. Use create_bright_crm_blog_draft to save the new version. Use a fresh angle if needed. Do not mention that this is a revision unless helpful for the reader.`;
+
+  await blogAgentModel.addMessage({ threadId, role: "user", content: message });
+  const runResult = await runBlog20Agent({ user, threadId, message });
+  await blogAgentModel.addMessage({
+    threadId,
+    role: "assistant",
+    content: runResult.output,
+    toolOutput: { durationMs: runResult.durationMs, posts: runResult.posts, revision: true },
+  });
+
+  return {
+    threadId,
+    posts: runResult.posts,
+    output: runResult.output,
+  };
+}

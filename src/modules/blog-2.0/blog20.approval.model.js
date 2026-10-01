@@ -96,6 +96,8 @@ export async function getApprovalById(id) {
             d.featured_image AS featured_image,
             d.status AS draft_status,
             d.author_name AS author_name,
+            d.thread_id AS thread_id,
+            d.created_by AS created_by,
             d.mailerlite_push_status AS draft_push_status
      FROM blog_2_0_draft_approvals a
      LEFT JOIN blog_2_0_drafts d ON d.id = a.draft_id

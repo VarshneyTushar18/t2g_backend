@@ -13,6 +13,10 @@ import {
   requestBlog20DraftApproval,
   sendTestBlog20ApprovalEmail,
 } from "./blog20.approval.service.js";
+import {
+  showBlog20RevisionForm,
+  submitBlog20Revision,
+} from "./blog20.approval.revision.js";
 
 export async function getOverview(req, res) {
   try {
@@ -171,6 +175,44 @@ export async function getChecklist(req, res) {
     });
   } catch (err) {
     res.status(500).json({ message: err.message || "Failed to load checklist" });
+  }
+}
+
+/** Public: GET /api/blog-2.0/approvals/revise?token=... */
+export async function showBlog20RevisionFormHandler(req, res) {
+  try {
+    const token = req.query.token || req.body?.token;
+    if (!token) {
+      return res
+        .status(400)
+        .type("html")
+        .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
+    }
+    const result = await showBlog20RevisionForm({ token });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog20-approval] revise form failed:", err);
+    res.status(500).type("html").send("<h1>Something went wrong</h1>");
+  }
+}
+
+/** Public: POST /api/blog-2.0/approvals/revise */
+export async function submitBlog20RevisionHandler(req, res) {
+  try {
+    const token = req.body?.token || req.query?.token;
+    const feedback = req.body?.feedback;
+    if (!token) {
+      return res.status(400).type("html").send("<h1>Missing token</h1>");
+    }
+    const result = await submitBlog20Revision({
+      token,
+      feedback,
+      actorEmail: req.body?.email || null,
+    });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog20-approval] revise submit failed:", err);
+    res.status(500).type("html").send("<h1>Something went wrong</h1>");
   }
 }
 
