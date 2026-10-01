@@ -34,6 +34,55 @@ export const getJobById = async (req, res) => {
   }
 };
 
+// GET /api/career/check-application?email=&jobId=
+export const checkApplication = async (req, res) => {
+  try {
+    const email = String(req.query.email || "").trim();
+    const jobId = String(req.query.jobId || "").trim();
+
+    if (!email || !jobId) {
+      return res.status(400).json({
+        error: "email and jobId are required",
+      });
+    }
+
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    if (!emailOk) {
+      return res.status(400).json({ error: "Please provide a valid email address." });
+    }
+
+    const recent = await CareerModel.findRecentApplication(
+      email,
+      jobId,
+      CareerModel.REAPPLY_COOLDOWN_DAYS,
+    );
+
+    if (!recent) {
+      return res.json({
+        success: true,
+        duplicate: false,
+        canApply: true,
+        reapplyAfterDays: CareerModel.REAPPLY_COOLDOWN_DAYS,
+        message: null,
+      });
+    }
+
+    const daysRemaining = Math.max(1, parseInt(recent.days_remaining, 10) || CareerModel.REAPPLY_COOLDOWN_DAYS);
+    return res.json({
+      success: true,
+      duplicate: true,
+      canApply: false,
+      reapplyAfterDays: CareerModel.REAPPLY_COOLDOWN_DAYS,
+      daysRemaining,
+      appliedAt: recent.applied_at,
+      message: `You already applied for this position with this email. You can re-apply after ${daysRemaining} day${daysRemaining === 1 ? "" : "s"} (cooldown: ${CareerModel.REAPPLY_COOLDOWN_DAYS} days).`,
+    });
+  } catch (err) {
+    console.error("checkApplication error:", err);
+    res.status(500).json({ error: "Failed to check application status" });
+  }
+};
+
 // POST /api/career/apply  (multipart/form-data with resume)
 export const submitApplication = async (req, res) => {
   try {
@@ -76,12 +125,22 @@ export const submitApplication = async (req, res) => {
       });
     }
 
-    // ── Check duplicate application ───────────────────
-    const isDuplicate = await CareerModel.checkDuplicate(email, jobId);
+    // ── Check duplicate within re-apply cooldown ──────
+    const recent = await CareerModel.findRecentApplication(
+      email,
+      jobId,
+      CareerModel.REAPPLY_COOLDOWN_DAYS,
+    );
 
-    if (isDuplicate) {
+    if (recent) {
+      const daysRemaining = Math.max(
+        1,
+        parseInt(recent.days_remaining, 10) || CareerModel.REAPPLY_COOLDOWN_DAYS,
+      );
       return res.status(409).json({
-        error: "You have already applied for this position with this email.",
+        error: `You already applied for this position with this email. You can re-apply after ${daysRemaining} day${daysRemaining === 1 ? "" : "s"} (cooldown: ${CareerModel.REAPPLY_COOLDOWN_DAYS} days).`,
+        daysRemaining,
+        reapplyAfterDays: CareerModel.REAPPLY_COOLDOWN_DAYS,
       });
     }
 
@@ -183,7 +242,8 @@ export const submitApplication = async (req, res) => {
 
     if (err.code === "ER_DUP_ENTRY") {
       return res.status(409).json({
-        error: "You have already applied for this position.",
+        error: `You already applied for this position. You can re-apply after ${CareerModel.REAPPLY_COOLDOWN_DAYS} days.`,
+        reapplyAfterDays: CareerModel.REAPPLY_COOLDOWN_DAYS,
       });
     }
 

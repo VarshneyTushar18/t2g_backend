@@ -95,6 +95,17 @@ export async function ensureBlogAgentTables() {
       );
     }
 
+    const [humanizeCol] = await blogDb.query(
+      "SHOW COLUMNS FROM blog_agent_guidelines LIKE 'humanize_percent'",
+    );
+    if (!humanizeCol.length) {
+      await blogDb.query(
+        `ALTER TABLE blog_agent_guidelines
+         ADD COLUMN humanize_percent TINYINT UNSIGNED NOT NULL DEFAULT 70
+         AFTER content`,
+      );
+    }
+
     console.log("Blog agent tables ensured.");
   } catch (err) {
     console.error("Blog agent table setup failed:", err.message);
