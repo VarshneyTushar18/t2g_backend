@@ -2,6 +2,7 @@ import * as approvalModel from "./blog20.approval.model.js";
 import * as draftsModel from "./blog20.drafts.model.js";
 import * as settingsModel from "./blog20.model.js";
 import { regenerateBlog20DraftFromFeedback } from "./blog20.agent.service.js";
+import { requestBlog20DraftApproval } from "./blog20.approval.service.js";
 import {
   buildBlog20DecisionUrls,
   renderBlog20DecisionPage,
@@ -62,29 +63,69 @@ function parseEmails(value) {
     .filter(Boolean);
 }
 
+function uniqueEmails(...values) {
+  return [...new Set(values.flatMap((value) => parseEmails(value)))];
+}
+
+/** Same approval email as first-time drafts (Preview, Save draft, Publish, Revise, Reject). */
+async function ensureRevisionApprovalEmail({
+  approval,
+  originalDraft,
+  newDraftMeta,
+  actorEmail,
+  settings,
+}) {
+  if (newDraftMeta?.approval?.approvalId) {
+    return { sent: true, approvalId: newDraftMeta.approval.approvalId, via: "agent-tool" };
+  }
+
+  const draftId = newDraftMeta?.id;
+  if (!draftId) {
+    throw new Error("Revision finished but no draft id was returned.");
+  }
+
+  const newDraft = await draftsModel.getDraftById(draftId);
+  if (!newDraft) {
+    throw new Error(`Revision draft #${draftId} was not found.`);
+  }
+
+  const approvalEmails = uniqueEmails(
+    approval.approval_emails,
+    settings.approval_emails,
+    approval.requester_email,
+  );
+  if (!approvalEmails.length) {
+    throw new Error(
+      "No approval emails configured. Add them in Admin → Blog-2.0 → Setup.",
+    );
+  }
+
+  const sent = await requestBlog20DraftApproval({
+    draft: newDraft,
+    requestedBy: originalDraft.created_by || "blog20-revision",
+    requesterEmail: actorEmail || approval.requester_email || null,
+    approvalEmails,
+  });
+
+  return { sent: true, approvalId: sent.approvalId, via: "revision-auto" };
+}
+
 function runRevisionInBackground({ approval, draft, feedback, actorEmail }) {
   void (async () => {
     try {
       const result = await regenerateBlog20DraftFromFeedback({ draft, feedback });
       const settings = await settingsModel.getSettings();
-      const recipients = [
-        ...parseEmails(approval.approval_emails),
-        ...parseEmails(approval.requester_email),
-      ];
-      const newDraft = result.posts?.[0];
-      const approvalSent = Boolean(newDraft?.approval?.approvalId);
-      if (newDraft && !approvalSent) {
-        await sendHtmlEmail({
-          to: recipients,
-          subject: `[Blog-2.0] New AI draft ready for review: ${newDraft.title}`,
-          html: `<p style="font-family:Segoe UI,Arial,sans-serif;line-height:1.6;">
-            Revision complete for <strong>${escapeHtml(draft.title)}</strong>.<br/><br/>
-            <strong>Feedback:</strong> ${escapeHtml(feedback)}<br/><br/>
-            New draft <strong>#${newDraft.id}</strong> — "${escapeHtml(newDraft.title)}" — is in Blog-2.0 Admin → Drafts.
-            Send approval email from Drafts if the team did not receive one automatically.
-          </p>`,
-        });
-      }
+      const newDraftMeta = result.posts?.[0];
+      const mail = await ensureRevisionApprovalEmail({
+        approval,
+        originalDraft: draft,
+        newDraftMeta,
+        actorEmail,
+        settings,
+      });
+      console.log(
+        `[blog20-revision] approval email for draft #${newDraftMeta?.id} via ${mail.via}`,
+      );
     } catch (err) {
       console.error("[blog20-approval] revision failed:", err.message);
       try {
