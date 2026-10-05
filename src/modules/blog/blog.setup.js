@@ -2,7 +2,6 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import blogDb from "../../config/blogDb.js";
-import { ensureBlogSocialTables } from "./blogSocial.setup.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sqlPath = path.join(__dirname, "../../../sql/blog_module.sql");
@@ -90,8 +89,6 @@ export async function ensureBlogTables() {
     for (const { col, sql } of SEO_COLUMN_MIGRATIONS) {
       await ensureColumn(col, sql);
     }
-
-    await ensureBlogSocialTables();
 
     console.log("Blog tables ensured automatically.");
   } catch (err) {

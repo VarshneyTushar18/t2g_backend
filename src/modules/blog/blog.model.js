@@ -8,11 +8,6 @@ import {
   parseTagsFromRow,
   resolveSeoForOutput,
 } from "./blogSeo.js";
-import {
-  normalizeSocialShareInput,
-  parseSocialShareFromRow,
-} from "./blogSocial.platforms.js";
-
 const slugify = (text = "") =>
   String(text)
     .toLowerCase()
@@ -43,7 +38,6 @@ const mapPostRow = (row) => {
       : [],
     tags: parseTagsFromRow(row),
     seo: mapSeoFromRow(row),
-    social_share: parseSocialShareFromRow(row),
     link: row.slug ? `/blogs/${row.slug}` : null,
   };
   return post;
@@ -86,7 +80,6 @@ const postSelect = `
     p.twitter_description,
     p.twitter_image,
     p.tags,
-    p.social_share,
     p.status,
     p.author_name,
     p.view_count,
@@ -381,7 +374,6 @@ export const createPost = async (data) => {
     { title, excerpt, featured_image },
   );
   const tags = normalizeTagsInput({ tags: tagsInput, ...data });
-  const socialShare = normalizeSocialShareInput(data.social_share);
   const publishedAt = status === "publish" ? new Date() : null;
 
   const [result] = await blogDb.query(
@@ -391,8 +383,8 @@ export const createPost = async (data) => {
        robots_noindex, robots_nofollow,
        og_title, og_description, og_image,
        twitter_title, twitter_description, twitter_image,
-       tags, social_share, status, author_name, published_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       tags, status, author_name, published_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       title,
       slug,
@@ -414,7 +406,6 @@ export const createPost = async (data) => {
       seo.twitter_description || null,
       seo.twitter_image || null,
       JSON.stringify(tags),
-      JSON.stringify(socialShare),
       status,
       author_name,
       publishedAt,
@@ -422,9 +413,7 @@ export const createPost = async (data) => {
   );
 
   await syncCategories(result.insertId, categories);
-  const created = await getById(result.insertId);
-  created._wasNewlyPublished = status === "publish";
-  return created;
+  return getById(result.insertId);
 };
 
 export const updatePost = async (id, data) => {
@@ -450,9 +439,6 @@ export const updatePost = async (id, data) => {
     { title, excerpt, featured_image },
   );
   const tags = normalizeTagsInput({ tags: tagsInput, ...data });
-  const socialShare = normalizeSocialShareInput(
-    data.social_share !== undefined ? data.social_share : existing.social_share,
-  );
 
   const slug = slugify(data.slug || title || existing.slug);
   if (!slug) {
@@ -477,7 +463,7 @@ export const updatePost = async (id, data) => {
          robots_noindex = ?, robots_nofollow = ?,
          og_title = ?, og_description = ?, og_image = ?,
          twitter_title = ?, twitter_description = ?, twitter_image = ?,
-         tags = ?, social_share = ?, status = ?, author_name = ?, published_at = ?
+         tags = ?, status = ?, author_name = ?, published_at = ?
      WHERE id = ?`,
     [
       title,
@@ -500,7 +486,6 @@ export const updatePost = async (id, data) => {
       seo.twitter_description || null,
       seo.twitter_image || null,
       JSON.stringify(tags),
-      JSON.stringify(socialShare),
       status,
       author_name,
       publishedAt,
@@ -509,9 +494,7 @@ export const updatePost = async (id, data) => {
   );
 
   await syncCategories(id, categories);
-  const updated = await getById(id);
-  updated._wasNewlyPublished = status === "publish" && existing.status !== "publish";
-  return updated;
+  return getById(id);
 };
 
 export const deletePost = async (id) => {
