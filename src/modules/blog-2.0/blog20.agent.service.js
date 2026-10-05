@@ -6,6 +6,12 @@ import {
   refreshConfiguredFlag,
 } from "../agents/lib/openai.js";
 import * as blogAgentModel from "../agents/blog/blogAgent.model.js";
+import {
+  clampHumanizePercent,
+  temperatureForHumanize,
+  buildWritingStyleBlock,
+  buildContentFormatRules,
+} from "../agents/blog/blogWritingStyle.js";
 import { createBlog20AgentTools } from "./blog20.tools.js";
 import * as settingsModel from "./blog20.model.js";
 
@@ -22,12 +28,14 @@ const WRITE_NOW_PATTERNS = [
 
 const DEFAULT_BRIGHT_CRM_GUIDELINES = `Bright CRM Blog Agent (Blog-2.0):
 - Client: Bright CRM — construction CRM & project management (NOT Tech2Globe)
-- Audience: construction companies, contractors, project managers
+- Audience: construction companies, contractors, project managers, estimators, site supers
 - Topics: CRM, leads, quotations, project tracking, team collaboration, construction business ops
 - Author default: Bright CRM Team
 - Website: client's MailerLite site — drafts are for MailerLite blog editor, NOT tech2globe.com
 - Always use tool create_bright_crm_blog_draft to save posts (never Tech2Globe create_blog_post)
-- Tone: professional, practical, helpful — not salesy`;
+- Tone: professional, practical, helpful — not salesy or hypey
+- Use real jobsite scenarios: missed RFIs, change orders, subcontractor handoffs, bid deadlines
+- Prefer concrete numbers (response times, % rework, quote turnaround) over vague "efficiency" talk`;
 
 function buildRunInput(history, userMessage) {
   const lines = [];
@@ -139,26 +147,44 @@ async function ensureBrightCrmGuidelines() {
   return blogAgentModel.getGuidelines(GUIDELINES_ID);
 }
 
-function buildSystemContext({ guidelines, settings }) {
-  return `${guidelines?.content || DEFAULT_BRIGHT_CRM_GUIDELINES}
+function buildSystemContext({ guidelines, settings, humanizePercent }) {
+  const human = clampHumanizePercent(
+    humanizePercent ?? guidelines?.humanize_percent,
+    70,
+  );
+  const ai = 100 - human;
 
-## Blog-2.0 project (isolated from Tech2Globe Blog)
-- Client site: ${settings.client_site_url || "Bright CRM MailerLite site"}
-- Client blog: ${settings.client_blog_url || settings.client_site_url || ""}
-- Save posts ONLY with create_bright_crm_blog_draft
-- After save: if approval emails are configured, team gets email with Preview + Yes/No — Yes triggers MailerLite bot automatically
-- If auto-push is enabled in settings, bot pushes immediately without email approval
-- NEVER say the post is live on the client website until a human Publishes in MailerLite
-- NEVER use a fake MailerLite preview URL — only mention Admin → Blog-2.0 → Drafts or the approval email preview link
-- Write-first workflow: when the user gives a topic, title, or brief — write the full blog IMMEDIATELY
-- Defaults: author "Bright CRM Team", audience = construction SMBs, infer SEO keyword from title
-- Do NOT run a long Q&A checklist before writing — ask at most ONE short question only if the message has zero topic
-- When user says ok/confirm/yes/go ahead/generate/write it, use prior messages and save the blog NOW
-- You MUST call create_bright_crm_blog_draft to save — never reply with only a plan, outline, or "shall I proceed?"
-- After save, briefly confirm draft id and that the approval email was sent (when configured)
+  const parts = [
+    guidelines?.content || DEFAULT_BRIGHT_CRM_GUIDELINES,
+    "",
+    `Content mix: **${human}% humanized voice** / **${ai}% AI structure** — honor this in every draft.`,
+    "",
+    "## Blog-2.0 project (isolated from Tech2Globe Blog)",
+    `- Client site: ${settings.client_site_url || "Bright CRM MailerLite site"}`,
+    `- Client blog: ${settings.client_blog_url || settings.client_site_url || ""}`,
+    "- Save posts ONLY with create_bright_crm_blog_draft",
+    "- After save: if approval emails are configured, team gets email with Preview + Yes/No — Yes triggers MailerLite bot automatically",
+    "- If auto-push is enabled in settings, bot pushes immediately without email approval",
+    "- NEVER say the post is live on the client website until a human Publishes in MailerLite",
+    "- NEVER use a fake MailerLite preview URL — only mention Admin → Blog-2.0 → Drafts or the approval email preview link",
+    "- Write-first workflow: when the user gives a topic, title, or brief — write the full blog IMMEDIATELY",
+    '- Defaults: author "Bright CRM Team", audience = construction SMBs, infer SEO keyword from title',
+    "- Do NOT run a long Q&A checklist before writing — ask at most ONE short question only if the message has zero topic",
+    "- When user says ok/confirm/yes/go ahead/generate/write it, use prior messages and save the blog NOW",
+    "- You MUST call create_bright_crm_blog_draft to save — never reply with only a plan, outline, or \"shall I proceed?\"",
+    "- After save, briefly confirm draft id and that the approval email was sent (when configured)",
+    "",
+    buildWritingStyleBlock(human, {
+      brandVoice:
+        "construction CRM expert on the Bright CRM team (jobsite + office reality, not marketing fluff)",
+    }),
+    buildContentFormatRules(),
+    "",
+    "## Newsletter (Phase 2)",
+    "MailerLite email campaign will be created separately after draft approval.",
+  ];
 
-## Newsletter (Phase 2)
-MailerLite email campaign will be created separately after draft approval.`;
+  return parts.join("\n");
 }
 
 const WRITE_NOW_MODE_INSTRUCTIONS = `
@@ -195,7 +221,6 @@ export async function runBlog20Agent({
   await ensureBrightCrmGuidelines();
 
   const userId = user.sub || user.id || "unknown";
-  const humanizePercent = 70;
 
   const [guidelines, settings, history] = await Promise.all([
     blogAgentModel.getGuidelines(GUIDELINES_ID),
@@ -203,13 +228,15 @@ export async function runBlog20Agent({
     blogAgentModel.listMessages(threadId),
   ]);
 
+  const humanizePercent = clampHumanizePercent(guidelines?.humanize_percent, 70);
+
   const tools = createBlog20AgentTools({
     userId,
     threadId,
     humanizePercent,
   });
 
-  let instructions = buildSystemContext({ guidelines, settings });
+  let instructions = buildSystemContext({ guidelines, settings, humanizePercent });
   if (revisionMode) {
     instructions += REVISION_MODE_INSTRUCTIONS;
   } else if (writeNowMode) {
@@ -225,7 +252,7 @@ export async function runBlog20Agent({
     tools,
     modelSettings: {
       maxTokens: 4500,
-      temperature: revisionMode || writeNowMode ? 0.65 : 0.75,
+      temperature: temperatureForHumanize(humanizePercent),
     },
   });
 

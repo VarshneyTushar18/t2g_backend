@@ -1,5 +1,7 @@
 import { tool } from "@openai/agents";
 import { z } from "zod";
+import { markdownToHtml } from "../agents/blog/blogAgent.tools.js";
+import { humanizeBlogHtml } from "../agents/blog/blogAgent.humanize.js";
 import * as draftsModel from "./blog20.drafts.model.js";
 import * as settingsModel from "./blog20.model.js";
 import { pushDraftToMailerLite } from "./blog20.mailerliteBot.js";
@@ -23,11 +25,21 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
     }),
     execute: async (params) => {
       const settings = await settingsModel.getSettings();
+      let html = markdownToHtml(params.content);
+      html = await humanizeBlogHtml(html, {
+        humanizePercent,
+        title: params.title,
+      });
+      const excerpt = (
+        params.excerpt ||
+        params.metaDescription ||
+        params.title
+      ).slice(0, 300);
       const draft = await draftsModel.createDraft({
         title: params.title,
         slug: params.slug,
-        excerpt: params.excerpt || params.metaDescription || params.title,
-        content: params.content,
+        excerpt,
+        content: html,
         featured_image: params.featured_image,
         focus_keyword: params.focusKeyword,
         status: params.status,
@@ -82,6 +94,7 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
         mailerlite_bot: botPush,
         approval,
         featured_image: draft.featured_image,
+        humanized: humanizePercent >= 40,
         humanize_percent: humanizePercent,
       };
     },
