@@ -7,14 +7,37 @@ import {
 } from "../lib/openai.js";
 import { createBlogAgentTools } from "./blogAgent.tools.js";
 import * as model from "./blogAgent.model.js";
+import {
+  clampHumanizePercent,
+  temperatureForHumanize,
+  buildWritingStyleBlock,
+  buildContentFormatRules,
+} from "./blogWritingStyle.js";
 
-function buildSystemContext({ guidelines, feedback, canPublish, userEmail }) {
+function buildSystemContext({
+  guidelines,
+  feedback,
+  canPublish,
+  userEmail,
+  humanizePercent = 70,
+}) {
   const parts = [];
+  const human = clampHumanizePercent(
+    humanizePercent ?? guidelines?.humanize_percent,
+    70,
+  );
+  const ai = 100 - human;
 
   parts.push(
-    `You are Tech2Globe Blog Agent — an expert content writer integrated into the admin panel.`,
+    `You are Tech2Globe Blog Agent — a helpful blog assistant for non-technical admins.`,
   );
   parts.push(`Logged-in user: ${userEmail || "admin"}.`);
+  parts.push(
+    `Content mix setting: ${human}% humanized / ${ai}% AI structure. Always honor this ratio.`,
+  );
+  parts.push(
+    `Audience of this chat: basic users. Prefer simple questions and short confirmations before writing a full blog.`,
+  );
 
   if (guidelines?.content) {
     parts.push(`\n## Brand guidelines (always follow)\n${guidelines.content}`);
@@ -44,73 +67,124 @@ function buildSystemContext({ guidelines, feedback, canPublish, userEmail }) {
     );
   }
 
+  parts.push(buildWritingStyleBlock(human));
+  parts.push(buildContentFormatRules());
+
   parts.push(`
-## Writing style (match top industry blogs: HubSpot, Shopify, Ahrefs, Medium)
-- Sound human and expert — clear, practical, scannable. Not robotic or keyword-stuffed.
-- Structure every post like a famous blog:
-  1) Strong H1-style title (passed as title, not inside body)
-  2) Short hook paragraph (2–3 sentences)
-  3) 4–7 H2 sections with optional H3s
-  4) Short paragraphs (2–4 sentences max)
-  5) Bullet or numbered lists for tips/steps
-  6) Bold sparingly for key phrases only
-  7) Soft CTA ending (no hard sell)
-- Length: ~700–1200 words unless user asks otherwise.
-- SEO: focus keyword in title + first paragraph + one H2; meta description 120–160 chars.
+## TWO-STAGE WORKFLOW (critical for new blog posts)
 
-## Content format rules (critical — avoid ugly published posts)
-- Write body as clean Markdown OR semantic HTML.
-- Allowed Markdown: ## / ### headings, paragraphs, - lists, 1. lists, **bold**, *italic*, [links](https://...), images.
-- NEVER leave raw asterisks, underscores, or markdown syntax visible in the final post.
-- Do NOT wrap the whole article in a single code block.
-- Do NOT use # for the post title inside content (title field is separate). Use ## for section headings.
-- Prefer real HTML when unsure: <h2>, <p>, <ul><li>, <strong>, <em>.
+### Stage A — Ask first (default for basic users)
+When the user wants a NEW blog and has NOT clearly confirmed writing yet:
+1. Do NOT call create_blog_post yet.
+2. Do NOT write the full blog body yet.
+3. Ask simple questions in plain English (max 6–7 bullets). Cover only missing items.
+4. Always try to learn:
+   - Topic / what the blog is about
+   - Who should read it (audience)
+   - Draft or publish${canPublish ? "" : " (this user can only draft)"}
+   - Author name (default: Tech2Globe Digital Team)
+   - Optional: focus keyword / SEO phrase
+   - Optional: competitor or reference link(s) (URL of a competitor post, client page, or article to match / improve on)
+   - Optional: images — stock photos by default (for AI images use Image Agent separately)
+5. When asking, include a clear bullet like:
+   - Do you have a competitor or reference link I should follow or improve on?
+6. After they answer (or if enough was already given), show a SHORT PLAN like:
 
-## Default workflow when user asks to write/publish a blog
-1. Infer topic from message and conversation history.
-2. If they name an author (e.g. "author Tarun"), pass author_name exactly.
-3. Decide image type:
-   - If user explicitly asks for AI-generated images (or says "generate images", "AI images", "generated cover"), call generate_blog_image.
-   - Otherwise call pick_blog_image (royalty-free Unsplash).
-4. Generate title, clean Markdown/HTML content, excerpt, slug, tags.
-5. If you used generate_blog_image, pass its URL as featured_image and also optionally generate 1–2 inline images and pass them as inline_image_urls.
-6. Call create_blog_post with featured_image and inline_image_urls (or add_inline_images true for non-AI images).
-7. Always include a cover image unless the user says no images.
-8. If they paste an image URL, use it as featured_image.
-9. If they ask to add images to an existing post, call add_images_to_post.
-10. If they ask to improve / rewrite / fix a post (or feedback says 👎), call update_blog_post with the existing id and improved content — do not create a duplicate unless they ask for a new post.
-11. Reply with result (id, slug, status, url, featured_image) — never invent success.
+Here is the plan:
+- Topic: ...
+- Audience: ...
+- Format/tone: ...
+- Length: ~900–1200 words
+- Author: ...
+- Status: draft|publish
+- SEO keyword: ... (or "I'll choose one")
+- Reference / competitor: ... (or "none")
+- Images: stock|AI|none
 
-Delete: list_blog_posts if needed, then delete_blog_post only on explicit request.
+Reply **yes** / **write it** to create the blog, or tell me what to change.
+
+7. Wait for confirmation before Stage B.
+
+### Skip asking / write immediately ONLY when:
+- User says: "just write it", "write it now", "skip questions", "go ahead and create", "don't ask", OR
+- Message is clearly an automation/system create instruction that already includes topic + "call create_blog_post", OR
+- User is improving/rewriting an EXISTING post (👎 feedback, update_blog_post), OR
+- User only asks to list/delete/add images to an existing post.
+
+If skipping questions, still honor author/status/images from the message.
+
+### Stage B — Write + save (only after confirm OR skip rules)
+1. Use the approved plan + conversation history.
+2. If they named an author, pass author_name exactly.
+3. If they gave a competitor/reference URL, use it for angle, structure, and gaps to improve — do not copy text.
+4. Images:
+   - AI images only if they asked ("generate images", "AI images", "generated cover") → generate_blog_image
+   - Otherwise pick_blog_image (Unsplash)
+4. Write title + clean Markdown/HTML body + excerpt + slug + tags using ${human}% human / ${ai}% AI style.
+5. Call create_blog_post with featured_image and inline_image_urls (or add_inline_images true for stock images).
+6. Always include a cover image unless user said no images.
+7. If they pasted an image URL, use it as featured_image.
+8. After success, reply EXACTLY in this form (never invent success):
+    Created draft
+    id: {numeric_id}
+    slug: {slug}
+    status: draft|publish
+    url: https://www.tech2globe.com/blogs/{slug}
+    The numeric id line is REQUIRED so the admin Preview button works.
+
+### Other actions
+- Add images to existing post → add_images_to_post
+- Improve / rewrite / fix (or 👎) → update_blog_post with existing id (no duplicate)
+- Delete → list_blog_posts if needed, then delete_blog_post only on explicit request
 Public URL format: https://www.tech2globe.com/blogs/{slug}`);
 
   return parts.join("\n");
 }
 
+function parseToolOutput(raw) {
+  let output = raw;
+  if (output == null) return null;
+  if (typeof output === "string") {
+    try {
+      output = JSON.parse(output);
+    } catch {
+      return null;
+    }
+  }
+  // Some SDK versions wrap as { type: "text", text: "..." }
+  if (output?.text && typeof output.text === "string") {
+    try {
+      output = JSON.parse(output.text);
+    } catch {
+      /* keep as-is */
+    }
+  }
+  return output;
+}
+
 function extractToolPosts(result) {
   const posts = [];
-  for (const item of result?.newItems || []) {
-    if (item?.type !== "tool_call_output_item") continue;
-    let output = item.output;
-    if (output == null && item.rawItem?.output != null) {
-      output = item.rawItem.output;
+  const seen = new Set();
+  const items = [
+    ...(Array.isArray(result?.newItems) ? result.newItems : []),
+    ...(Array.isArray(result?.items) ? result.items : []),
+  ];
+
+  for (const item of items) {
+    const type = item?.type || item?.rawItem?.type;
+    if (
+      type &&
+      type !== "tool_call_output_item" &&
+      type !== "function_call_result" &&
+      type !== "tool_result"
+    ) {
+      continue;
     }
-    if (typeof output === "string") {
-      try {
-        output = JSON.parse(output);
-      } catch {
-        continue;
-      }
-    }
-    // Some SDK versions wrap as { type: "text", text: "..." }
-    if (output?.text && typeof output.text === "string") {
-      try {
-        output = JSON.parse(output.text);
-      } catch {
-        /* keep as-is */
-      }
-    }
-    if (output && output.ok && output.id) {
+    const output = parseToolOutput(
+      item?.output ?? item?.rawItem?.output ?? item?.result,
+    );
+    if (output && output.ok && output.id && !seen.has(output.id)) {
+      seen.add(output.id);
       posts.push({
         id: output.id,
         slug: output.slug,
@@ -167,16 +241,21 @@ export async function runBlogAgent({ user, threadId, message }) {
     model.listMessages(threadId),
   ]);
 
+  // Fixed content mix: exactly 70% human / 30% AI (never odd values like 31%)
+  const humanizePercent = 70;
+
   const systemContext = buildSystemContext({
     guidelines,
     feedback,
     canPublish: effectiveCanPublish,
     userEmail,
+    humanizePercent,
   });
 
   const tools = createBlogAgentTools({
     canPublish: effectiveCanPublish,
     canDelete: effectiveCanDelete,
+    humanizePercent,
   });
 
   const agent = new Agent({
@@ -184,7 +263,10 @@ export async function runBlogAgent({ user, threadId, message }) {
     instructions: systemContext,
     model: getDefaultModel(),
     tools,
-    modelSettings: { maxTokens: 4500 },
+    modelSettings: {
+      maxTokens: 4500,
+      temperature: temperatureForHumanize(humanizePercent),
+    },
   });
 
   const runInput = buildRunInput(history, message);

@@ -3,6 +3,8 @@ import {
   runAutomationNow,
   sendTestSampleEmail,
 } from "./agentAutomations.service.js";
+import { handleSignedAction } from "./blogApproval.service.js";
+import { getPublicApiBase } from "./blogApproval.email.js";
 
 function handleError(res, err, fallback) {
   console.error(fallback, err);
@@ -27,10 +29,38 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
 
+/** Public: GET /api/agents/automations/approvals/go?token=... */
+export async function goApproval(req, res) {
+  try {
+    const token = req.query.token || req.body?.token;
+    if (!token) {
+      return res
+        .status(400)
+        .type("html")
+        .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
+    }
+    const result = await handleSignedAction({
+      token,
+      actorEmail: req.query.email || null,
+    });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog-approval] go failed:", err);
+    res
+      .status(500)
+      .type("html")
+      .send("<h1>Something went wrong</h1><p>Please try again or contact admin.</p>");
+  }
+}
+
 export async function getSettings(_req, res) {
   try {
     const settings = await model.getSettings();
-    res.json({ settings });
+    res.json({
+      settings,
+      publicApiConfigured: Boolean(getPublicApiBase()),
+      publicApiBase: getPublicApiBase() || null,
+    });
   } catch (err) {
     handleError(res, err, "Failed to load settings");
   }
@@ -44,7 +74,7 @@ export async function updateSettings(req, res) {
 
     if (mode !== "draft_only" && !approval_emails.length) {
       return res.status(400).json({
-        error: "Add at least one sample blog email when using email modes",
+        error: "Add at least one approval email when using email modes",
       });
     }
 
@@ -66,7 +96,11 @@ export async function updateSettings(req, res) {
       mode,
       approval_emails,
     });
-    res.json({ settings });
+    res.json({
+      settings,
+      publicApiConfigured: Boolean(getPublicApiBase()),
+      publicApiBase: getPublicApiBase() || null,
+    });
   } catch (err) {
     handleError(res, err, "Failed to save settings");
   }
@@ -171,7 +205,7 @@ export async function testSampleEmail(req, res) {
       emails.push(...parseEmailList(settings.approval_emails));
     }
     if (!emails.length) {
-      return res.status(400).json({ error: "Add a sample blog email first" });
+      return res.status(400).json({ error: "Add an approval email first" });
     }
     const invalid = emails.filter((e) => !isValidEmail(e));
     if (invalid.length) {
@@ -179,8 +213,8 @@ export async function testSampleEmail(req, res) {
         error: `Invalid email(s): ${invalid.join(", ")}`,
       });
     }
-    await sendTestSampleEmail(emails);
-    res.json({ ok: true, sentTo: emails });
+    const result = await sendTestSampleEmail(emails);
+    res.json({ ok: true, sentTo: emails, ...result });
   } catch (err) {
     handleError(res, err, "Failed to send test email");
   }

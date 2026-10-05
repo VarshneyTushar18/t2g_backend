@@ -7,6 +7,7 @@ import {
   pickStockImage,
 } from "./blogAgent.images.js";
 import { generateAndUploadBlogImage } from "../blog-image/blogImage.generate.js";
+import { humanizeBlogHtml } from "./blogAgent.humanize.js";
 
 function slugify(title) {
   return String(title || "post")
@@ -165,8 +166,12 @@ function markdownToHtml(md) {
 
 export { markdownToHtml };
 
-/** @param {{ canPublish: boolean, canDelete: boolean }} permissions */
-export function createBlogAgentTools({ canPublish, canDelete }) {
+/** @param {{ canPublish: boolean, canDelete: boolean, humanizePercent?: number }} permissions */
+export function createBlogAgentTools({
+  canPublish,
+  canDelete,
+  humanizePercent = 70,
+}) {
   const createBlogPost = tool({
     name: "create_blog_post",
     description:
@@ -229,6 +234,10 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
 
         const slug = params.slug || slugify(params.title);
         let html = markdownToHtml(params.content);
+        html = await humanizeBlogHtml(html, {
+          humanizePercent,
+          title: params.title,
+        });
         const author = (params.author_name || "Tech2Globe Digital Team").trim();
         const topicHint = [params.title, params.focusKeyword, ...(params.tags || [])]
           .filter(Boolean)
@@ -277,6 +286,8 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
           author_name: post.author_name,
           url: `https://www.tech2globe.com/blogs/${post.slug}`,
           featured_image: cover,
+          humanized: humanizePercent >= 40,
+          humanize_percent: humanizePercent,
           note:
             resolvedStatus === "draft" && canPublish === false
               ? "Saved as draft — user does not have publish permission."
@@ -330,10 +341,14 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
           resolvedStatus = existing.status === "publish" ? "publish" : "draft";
         }
 
-        const content =
-          params.content != null
-            ? markdownToHtml(params.content)
-            : existing.content;
+        let content = existing.content;
+        if (params.content != null) {
+          content = markdownToHtml(params.content);
+          content = await humanizeBlogHtml(content, {
+            humanizePercent,
+            title: params.title || existing.title,
+          });
+        }
 
         const seo = {
           ...(existing.seo || {}),

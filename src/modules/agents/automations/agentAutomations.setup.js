@@ -5,10 +5,15 @@ import blogDb from "../../../config/blogDb.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sqlPath = path.join(__dirname, "../../../../sql/agent_automations.sql");
+const approvalsSqlPath = path.join(
+  __dirname,
+  "../../../../sql/blog_agent_approvals.sql",
+);
 
 const REQUIRED_TABLES = [
   "agent_automations_settings",
   "agent_automations_topics",
+  "blog_agent_approvals",
 ];
 
 async function tableExists(name) {
@@ -27,13 +32,17 @@ export async function ensureAgentAutomationsTables() {
     console.log(
       `[agent-automations] schema incomplete (missing: ${missing.join(", ")}). Installing...`,
     );
-    const sql = fs.readFileSync(sqlPath, "utf8");
-    const statements = sql
-      .split(";")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    for (const stmt of statements) {
-      await blogDb.query(stmt);
+    const sqlFiles = [sqlPath, approvalsSqlPath];
+    for (const file of sqlFiles) {
+      if (!fs.existsSync(file)) continue;
+      const sql = fs.readFileSync(file, "utf8");
+      const statements = sql
+        .split(";")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const stmt of statements) {
+        await blogDb.query(stmt);
+      }
     }
     console.log("[agent-automations] tables ensured");
   } catch (err) {

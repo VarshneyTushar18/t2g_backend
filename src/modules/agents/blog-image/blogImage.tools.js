@@ -51,7 +51,7 @@ export function createBlogImageAgentTools({ userId, threadId, canEdit }) {
   const attachImageToPost = tool({
     name: "attach_image_to_post",
     description:
-      "Set a Cloudinary image as the featured/cover image of an existing blog post.",
+      "ONLY when the user explicitly asks to attach/set an image on an existing blog post. Never auto-attach after generate.",
     parameters: z.object({
       post_id: z.number().int().nullable().default(null),
       slug: z.string().nullable().default(null),
