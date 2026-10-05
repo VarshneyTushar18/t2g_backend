@@ -1,5 +1,6 @@
 import express from "express";
 import * as controller from "./blog.controller.js";
+import * as socialController from "./blogSocial.controller.js";
 import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 import { requireBlogDb } from "../../middleware/requireBlogDb.js";
 import { blogUpload } from "../../config/multer.js";
@@ -23,6 +24,12 @@ router.delete("/categories/:id", ...adminBlog, controller.deleteCategory);
 
 router.get("/editor-schema", ...adminBlog, controller.getPostEditorSchema);
 router.get("/tags", ...adminBlog, controller.getTags);
+
+router.get("/social/platforms", ...adminBlog, socialController.getPlatforms);
+router.post("/social/accounts/:platform/connect", ...adminBlog, socialController.connectAccount);
+router.post("/social/accounts/:platform/disconnect", ...adminBlog, socialController.disconnectAccount);
+router.get("/social/posts/:postId", ...adminBlog, socialController.getPostSocial);
+router.post("/social/posts/:postId/retry", ...adminBlog, socialController.retryPostShare);
 
 router.get("/admin/list", ...adminBlog, controller.getAllAdmin);
 router.get("/admin/export", ...adminBlog, controller.exportSeoCsv);

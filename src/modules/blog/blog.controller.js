@@ -1,4 +1,5 @@
 import * as model from "./blog.model.js";
+import { sharePostOnPublish } from "./blogSocial.service.js";
 import {
   SEO_EXPORT_HEADERS,
   buildSeoExportRows,
@@ -73,7 +74,21 @@ const normalizePayload = (body = {}, file = null) => {
     categories: parseJsonField(body.categories ?? body.category_ids, []),
     seo: parseJsonField(body.seo, undefined),
     tags: parseJsonField(body.tags, undefined),
+    social_share: parseJsonField(body.social_share, undefined),
   };
+};
+
+const stripInternalPostFields = (post) => {
+  if (!post || typeof post !== "object") return post;
+  const { _wasNewlyPublished, ...rest } = post;
+  return rest;
+};
+
+const runSocialShareIfNeeded = (post) => {
+  if (!post?._wasNewlyPublished || post.status !== "publish") return;
+  void sharePostOnPublish(post, post.social_share).catch((err) => {
+    console.error(`[blog-social] share failed for post #${post.id}:`, err.message);
+  });
 };
 
 const handleBlogError = (res, err, fallback) => {
@@ -320,7 +335,8 @@ export const create = async (req, res) => {
     }
 
     const data = await model.createPost(payload);
-    res.json({ success: true, message: "Blog post created", data });
+    runSocialShareIfNeeded(data);
+    res.json({ success: true, message: "Blog post created", data: stripInternalPostFields(data) });
   } catch (err) {
     if (err.status === 400) {
       return res.status(400).json({ error: err.message });
@@ -349,7 +365,8 @@ export const update = async (req, res) => {
       return res.status(404).json({ error: "Not found" });
     }
 
-    res.json({ success: true, message: "Blog post updated", data });
+    runSocialShareIfNeeded(data);
+    res.json({ success: true, message: "Blog post updated", data: stripInternalPostFields(data) });
   } catch (err) {
     if (err.status === 400) {
       return res.status(400).json({ error: err.message });
