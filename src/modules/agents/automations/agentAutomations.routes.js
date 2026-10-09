@@ -45,8 +45,10 @@ const requireBlogEdit = [
 
 router.use(requireBlogDb);
 
-// Public Career-style Yes/No/Preview links (no admin auth)
+// Public approval links (no admin auth)
 router.get("/approvals/go", controller.goApproval);
+router.get("/approvals/revise", controller.showRevisionFormHandler);
+router.post("/approvals/revise", controller.submitRevisionHandler);
 
 router.get("/settings", ...requireBlogView, controller.getSettings);
 router.put("/settings", ...requireBlogEdit, controller.updateSettings);

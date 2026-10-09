@@ -62,19 +62,32 @@ export function buildDecisionUrls(approvalId, expiresAt) {
   if (!base) {
     return {
       approveUrl: null,
+      approveDraftUrl: null,
+      approvePublishUrl: null,
+      reviseUrl: null,
       rejectUrl: null,
       previewUrl: null,
       missingBase: true,
     };
   }
-  const root = `${base}/api/agents/automations/approvals`;
-  const approve = signApprovalToken(approvalId, "approve", expiresAt);
+  const root = `${base}/api/agents/automations/approvals/go`;
+  const approveDraft = signApprovalToken(approvalId, "approve_draft", expiresAt);
+  const approvePublish = signApprovalToken(approvalId, "approve_publish", expiresAt);
+  const approveLegacy = signApprovalToken(approvalId, "approve", expiresAt);
+  const revise = signApprovalToken(approvalId, "revise", expiresAt);
   const reject = signApprovalToken(approvalId, "reject", expiresAt);
   const preview = signApprovalToken(approvalId, "preview", expiresAt);
+  const reviseBase = base.replace(/\/$/, "");
+  const approvePublishUrl = `${root}?token=${encodeURIComponent(approvePublish)}`;
+  const approveDraftUrl = `${root}?token=${encodeURIComponent(approveDraft)}`;
   return {
-    approveUrl: `${root}/go?token=${encodeURIComponent(approve)}`,
-    rejectUrl: `${root}/go?token=${encodeURIComponent(reject)}`,
-    previewUrl: `${root}/go?token=${encodeURIComponent(preview)}`,
+    approveUrl: approvePublishUrl,
+    approveDraftUrl,
+    approvePublishUrl,
+    approveLegacyUrl: `${root}?token=${encodeURIComponent(approveLegacy)}`,
+    reviseUrl: `${reviseBase}/api/agents/automations/approvals/revise?token=${encodeURIComponent(revise)}`,
+    rejectUrl: `${root}?token=${encodeURIComponent(reject)}`,
+    previewUrl: `${root}?token=${encodeURIComponent(preview)}`,
     missingBase: false,
   };
 }
@@ -132,7 +145,13 @@ function postSummaryBlock(post) {
   `;
 }
 
-function ctaButtons({ approveUrl, rejectUrl, previewUrl }) {
+function ctaButtons({
+  approveDraftUrl,
+  approvePublishUrl,
+  reviseUrl,
+  rejectUrl,
+  previewUrl,
+}) {
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" style="margin:8px 0 18px;">
       <tr>
@@ -142,15 +161,27 @@ function ctaButtons({ approveUrl, rejectUrl, previewUrl }) {
       </tr>
       <tr>
         <td style="padding-right:10px;padding-bottom:10px;">
-          <a href="${approveUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">2. Yes — Publish</a>
+          <a href="${approveDraftUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">2. Save as draft</a>
         </td>
+      </tr>
+      <tr>
+        <td style="padding-right:10px;padding-bottom:10px;">
+          <a href="${approvePublishUrl}" style="display:inline-block;background:#0d9488;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">3. Publish live</a>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-right:10px;padding-bottom:10px;">
+          <a href="${reviseUrl}" style="display:inline-block;background:#d97706;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">4. Request AI revision</a>
+        </td>
+      </tr>
+      <tr>
         <td style="padding-bottom:10px;">
-          <a href="${rejectUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">3. No — Keep draft</a>
+          <a href="${rejectUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">5. Reject (no rewrite)</a>
         </td>
       </tr>
     </table>
     <p style="font-size:12px;color:#64748b;margin:0;">
-      Tip: open Preview first, then choose Yes or No.
+      Not happy? Request AI revision → new version + fresh approval email. Reject → stays draft, no rewrite.
     </p>
   `;
 }
@@ -158,7 +189,9 @@ function ctaButtons({ approveUrl, rejectUrl, previewUrl }) {
 export function buildApprovalRequestEmail({
   post,
   topic,
-  approveUrl,
+  approveDraftUrl,
+  approvePublishUrl,
+  reviseUrl,
   rejectUrl,
   previewUrl,
   requesterEmail,
@@ -166,11 +199,11 @@ export function buildApprovalRequestEmail({
   isReminder = false,
 }) {
   const title = isReminder
-    ? `Reminder: Publish “${post.title}”?`
-    : `Should we publish “${post.title}”?`;
+    ? `Reminder: Approve “${post.title}”?`
+    : `Approve blog: “${post.title}”?`;
   const intro = isReminder
     ? `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Friendly reminder — a blog is waiting for your decision.</p>`
-    : `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">A new blog is ready. Preview it, then choose Yes to publish or No to keep it as draft.</p>`;
+    : `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">A new blog is ready. Preview it, save as draft, publish live, or <strong>request an AI revision</strong> if you want changes.</p>`;
 
   const topicLine = topic?.topic
     ? `<p style="margin:0 0 8px;font-size:14px;color:#475569;"><strong>Queue topic:</strong> ${escapeHtml(topic.topic)}</p>`
@@ -185,18 +218,19 @@ export function buildApprovalRequestEmail({
     </p>
     ${postSummaryBlock(post)}
     <p style="margin:0 0 14px;font-size:15px;"><strong>What do you want to do?</strong></p>
-    ${ctaButtons({ approveUrl, rejectUrl, previewUrl })}
-    <p style="margin:18px 0 0;font-size:12px;color:#94a3b8;">
-      Preview → read full page.
-      Yes → goes live.
-      No → stays draft in Admin.
-    </p>
+    ${ctaButtons({
+      approveDraftUrl,
+      approvePublishUrl,
+      reviseUrl,
+      rejectUrl,
+      previewUrl,
+    })}
   `;
 
   return {
     subject: isReminder
-      ? `[Action needed] Reminder — publish blog: ${post.title}`
-      : `[Action needed] Publish blog? ${post.title}`,
+      ? `[Action needed] Reminder — blog approval: ${post.title}`
+      : `[Action needed] Approve blog? ${post.title}`,
     html: shell({
       title,
       eyebrow: isReminder ? "Blog Reminder" : "Blog Approval Required",
@@ -205,9 +239,18 @@ export function buildApprovalRequestEmail({
   };
 }
 
-export function buildDecisionConfirmationEmail({ post, decision, decidedByEmail }) {
+export function buildDecisionConfirmationEmail({
+  post,
+  decision,
+  decidedByEmail,
+  publishedLive = false,
+}) {
   const approved = decision === "approved";
-  const title = approved ? `Published: ${post.title}` : `Kept as draft: ${post.title}`;
+  const title = approved
+    ? publishedLive
+      ? `Published: ${post.title}`
+      : `Saved as draft: ${post.title}`
+    : `Kept as draft: ${post.title}`;
   const liveUrl = post.slug
     ? `https://www.tech2globe.com/blogs/${post.slug}`
     : null;
@@ -215,12 +258,14 @@ export function buildDecisionConfirmationEmail({ post, decision, decidedByEmail 
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">
       ${
         approved
-          ? "You approved this blog. It is now <strong>published</strong> on Tech2Globe."
+          ? publishedLive
+            ? "You approved this blog. It is now <strong>published</strong> on Tech2Globe."
+            : "You approved this blog. It is saved as a <strong>draft</strong> in Admin."
           : "You declined publishing. The post remains a <strong>draft</strong> in Admin."
       }
     </p>
     <p style="margin:0 0 14px;font-size:14px;color:#475569;">
-      Decision: <strong>${approved ? "YES — Publish" : "NO — Keep as draft"}</strong><br/>
+      Decision: <strong>${approved ? (publishedLive ? "Publish live" : "Save as draft") : "Reject — keep draft"}</strong><br/>
       Recorded via: <strong>${escapeHtml(decidedByEmail || "secure email link")}</strong>
     </p>
     ${postSummaryBlock(post)}
@@ -232,7 +277,9 @@ export function buildDecisionConfirmationEmail({ post, decision, decidedByEmail 
   `;
   return {
     subject: approved
-      ? `[Confirmed] Blog published: ${post.title}`
+      ? publishedLive
+        ? `[Confirmed] Blog published: ${post.title}`
+        : `[Confirmed] Blog saved as draft: ${post.title}`
       : `[Confirmed] Blog kept as draft: ${post.title}`,
     html: shell({
       title,
@@ -267,14 +314,26 @@ export async function sendHtmlEmail({ to, subject, html, replyTo }) {
   return { sent: true, recipients };
 }
 
-export function renderDecisionPage({ ok, decision, postTitle, message, liveUrl = null }) {
+export function renderDecisionPage({
+  ok,
+  decision,
+  postTitle,
+  message,
+  liveUrl = null,
+  publishedLive = false,
+}) {
   const approved = decision === "approved";
-  const color = !ok ? "#b45309" : approved ? "#15803d" : "#b91c1c";
+  const revision = decision === "revision_requested";
+  const color = !ok ? "#b45309" : revision ? "#d97706" : approved ? "#15803d" : "#b91c1c";
   const headline = !ok
     ? "Unable to complete"
-    : approved
-      ? "Blog published"
-      : "Kept as draft";
+    : revision
+      ? "AI revision started"
+      : approved
+        ? publishedLive
+          ? "Blog published"
+          : "Saved as draft"
+        : "Kept as draft";
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -294,8 +353,16 @@ export function renderDecisionPage({ ok, decision, postTitle, message, liveUrl =
 </html>`;
 }
 
-/** Full-page live preview of the blog article + Yes/No CTAs */
-export function renderPreviewPage({ post, approveUrl, rejectUrl, decision, expiresAt }) {
+/** Full-page live preview of the blog article + approval CTAs */
+export function renderPreviewPage({
+  post,
+  approveDraftUrl,
+  approvePublishUrl,
+  reviseUrl,
+  rejectUrl,
+  decision,
+  expiresAt,
+}) {
   const pending = decision === "pending";
   const content = String(post.content || "");
   return `<!DOCTYPE html>
@@ -309,7 +376,9 @@ export function renderPreviewPage({ post, approveUrl, rejectUrl, decision, expir
     .bar { position:sticky; top:0; z-index:5; background:#0f172a; color:#fff; padding:12px 16px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
     .bar .meta { font-family:Segoe UI,Arial,sans-serif; font-size:13px; opacity:0.9; }
     .bar a { font-family:Segoe UI,Arial,sans-serif; text-decoration:none; padding:10px 14px; border-radius:8px; font-weight:700; font-size:13px; }
-    .yes { background:#16a34a; color:#fff; }
+    .draft { background:#16a34a; color:#fff; }
+    .publish { background:#0d9488; color:#fff; }
+    .revise { background:#d97706; color:#fff; }
     .no { background:#dc2626; color:#fff; }
     .closed { font-family:Segoe UI,Arial,sans-serif; background:#334155; color:#fff; padding:10px 14px; border-radius:8px; }
     .wrap { max-width:760px; margin:28px auto 48px; padding:0 16px; }
@@ -336,8 +405,10 @@ export function renderPreviewPage({ post, approveUrl, rejectUrl, decision, expir
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       ${
         pending
-          ? `<a class="yes" href="${approveUrl}">Yes — Publish</a>
-             <a class="no" href="${rejectUrl}">No — Keep draft</a>`
+          ? `<a class="draft" href="${approveDraftUrl}">Save draft</a>
+             <a class="publish" href="${approvePublishUrl}">Publish live</a>
+             <a class="revise" href="${reviseUrl}">AI revision</a>
+             <a class="no" href="${rejectUrl}">Reject</a>`
           : `<span class="closed">Request already ${escapeHtml(decision)}</span>`
       }
     </div>

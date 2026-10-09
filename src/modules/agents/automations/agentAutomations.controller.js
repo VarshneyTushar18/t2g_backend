@@ -4,6 +4,10 @@ import {
   sendTestSampleEmail,
 } from "./agentAutomations.service.js";
 import { handleSignedAction } from "./blogApproval.service.js";
+import {
+  showRevisionForm,
+  submitRevision,
+} from "./blogApproval.revision.js";
 import { getPublicApiBase } from "./blogApproval.email.js";
 
 function handleError(res, err, fallback) {
@@ -27,6 +31,53 @@ function parseEmailList(value) {
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
+/** Public: GET /api/agents/automations/approvals/revise?token=... */
+export async function showRevisionFormHandler(req, res) {
+  try {
+    const token = req.query.token || req.body?.token;
+    if (!token) {
+      return res
+        .status(400)
+        .type("html")
+        .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
+    }
+    const result = await showRevisionForm({ token });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog-approval] revise form failed:", err);
+    res
+      .status(500)
+      .type("html")
+      .send("<h1>Something went wrong</h1><p>Please try again or contact admin.</p>");
+  }
+}
+
+/** Public: POST /api/agents/automations/approvals/revise */
+export async function submitRevisionHandler(req, res) {
+  try {
+    const token = req.body?.token || req.query.token;
+    const feedback = req.body?.feedback;
+    if (!token) {
+      return res
+        .status(400)
+        .type("html")
+        .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
+    }
+    const result = await submitRevision({
+      token,
+      feedback,
+      actorEmail: req.body?.email || null,
+    });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog-approval] revise submit failed:", err);
+    res
+      .status(500)
+      .type("html")
+      .send("<h1>Something went wrong</h1><p>Please try again or contact admin.</p>");
+  }
 }
 
 /** Public: GET /api/agents/automations/approvals/go?token=... */

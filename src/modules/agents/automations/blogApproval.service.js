@@ -50,7 +50,9 @@ async function sendApprovalMail({
   const mail = buildApprovalRequestEmail({
     post,
     topic,
-    approveUrl: urls.approveUrl,
+    approveDraftUrl: urls.approveDraftUrl,
+    approvePublishUrl: urls.approvePublishUrl,
+    reviseUrl: urls.reviseUrl,
     rejectUrl: urls.rejectUrl,
     previewUrl: urls.previewUrl,
     requesterEmail,
@@ -198,7 +200,9 @@ export async function handleSignedAction({ token, actorEmail = null }) {
       status: 200,
       html: renderPreviewPage({
         post: postShape,
-        approveUrl: urls.approveUrl,
+        approveDraftUrl: urls.approveDraftUrl,
+        approvePublishUrl: urls.approvePublishUrl,
+        reviseUrl: urls.reviseUrl,
         rejectUrl: urls.rejectUrl,
         decision: approval.decision,
         expiresAt: approval.expires_at,
@@ -206,7 +210,8 @@ export async function handleSignedAction({ token, actorEmail = null }) {
     };
   }
 
-  if (payload.act !== "approve" && payload.act !== "reject") {
+  const approveActs = ["approve", "approve_draft", "approve_publish"];
+  if (!approveActs.includes(payload.act) && payload.act !== "reject") {
     return {
       ok: false,
       status: 400,
@@ -246,9 +251,11 @@ export async function handleSignedAction({ token, actorEmail = null }) {
     };
   }
 
-  const wantApprove = payload.act === "approve";
+  const wantApprove = approveActs.includes(payload.act);
+  const publishLive =
+    payload.act === "approve" || payload.act === "approve_publish";
   const decision = wantApprove ? "approved" : "rejected";
-  const nextStatus = wantApprove ? "publish" : "draft";
+  const nextStatus = wantApprove ? (publishLive ? "publish" : "draft") : "draft";
 
   const updated = await approvalModel.markDecision(
     approval.id,
@@ -294,6 +301,7 @@ export async function handleSignedAction({ token, actorEmail = null }) {
       post: publishedPost || postShape,
       decision,
       decidedByEmail: actorEmail,
+      publishedLive: wantApprove && publishLive,
     });
     await sendHtmlEmail({
       to: recipients,
@@ -305,7 +313,7 @@ export async function handleSignedAction({ token, actorEmail = null }) {
   }
 
   const liveUrl =
-    wantApprove && publishedPost?.slug
+    wantApprove && publishLive && publishedPost?.slug
       ? `https://www.tech2globe.com/blogs/${publishedPost.slug}`
       : null;
 
@@ -319,9 +327,12 @@ export async function handleSignedAction({ token, actorEmail = null }) {
       decision,
       postTitle: publishedPost?.title || approval.title,
       message: wantApprove
-        ? "Thank you. The blog is now live on tech2globe.com."
+        ? publishLive
+          ? "Thank you. The blog is now live on tech2globe.com."
+          : "Thank you. The blog is saved as a draft in Admin → Blog."
         : "Understood. The blog will stay as a draft in Admin.",
       liveUrl,
+      publishedLive: wantApprove && publishLive,
     }),
   };
 }
@@ -355,7 +366,9 @@ export async function sendTestApprovalEmail(recipientsInput) {
   const mail = buildApprovalRequestEmail({
     post: samplePost,
     topic: { topic: "Sample automation topic" },
-    approveUrl: urls.approveUrl,
+    approveDraftUrl: urls.approveDraftUrl,
+    approvePublishUrl: urls.approvePublishUrl,
+    reviseUrl: urls.reviseUrl,
     rejectUrl: urls.rejectUrl,
     previewUrl: urls.previewUrl,
     requesterEmail: "agent-automations@tech2globe.com",
