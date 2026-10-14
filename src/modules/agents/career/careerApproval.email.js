@@ -74,12 +74,60 @@ export function buildDecisionUrls(approvalId, expiresAt) {
   const approve = signApprovalToken(approvalId, "approve", expiresAt);
   const reject = signApprovalToken(approvalId, "reject", expiresAt);
   const preview = signApprovalToken(approvalId, "preview", expiresAt);
+  const manage = signApprovalToken(approvalId, "manage_list", expiresAt);
   return {
     approveUrl: `${root}/go?token=${encodeURIComponent(approve)}`,
     rejectUrl: `${root}/go?token=${encodeURIComponent(reject)}`,
     previewUrl: `${root}/go?token=${encodeURIComponent(preview)}`,
+    manageUrl: `${root}/go?token=${encodeURIComponent(manage)}`,
+    manageToken: manage,
     missingBase: false,
   };
+}
+
+/** Numbered list of jobs currently live on tech2globe.com/career */
+export function buildActiveJobsListSection(activeJobs, manageUrl) {
+  if (!activeJobs?.length) {
+    return `
+      <div style="margin:22px 0 0;padding:16px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
+        <h3 style="margin:0 0 8px;font-size:15px;">Currently live on careers page</h3>
+        <p style="margin:0;font-size:14px;color:#64748b;">No active job postings right now.</p>
+      </div>
+    `;
+  }
+
+  const rows = activeJobs
+    .map(
+      (j, index) => `
+      <tr>
+        <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:800;color:#1d4ed8;width:40px;">${index + 1}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapeHtml(j.title)}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#64748b;">${escapeHtml(j.location || "—")} · ${escapeHtml(j.experience || "—")}</td>
+      </tr>`,
+    )
+    .join("");
+
+  const manageLink = manageUrl
+    ? `<p style="margin:14px 0 0;font-size:14px;">
+        <a href="${manageUrl}" style="color:#1d4ed8;font-weight:700;">Open remove-by-number page</a>
+        — enter the list number to take a role off the careers page (sets inactive).
+      </p>`
+    : "";
+
+  return `
+    <div style="margin:22px 0 0;padding:16px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
+      <h3 style="margin:0 0 10px;font-size:15px;">Currently live on careers page (${activeJobs.length})</h3>
+      <table role="presentation" width="100%" style="border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;">
+        <tr>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748b;background:#f1f5f9;">#</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748b;background:#f1f5f9;">Title</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748b;background:#f1f5f9;">Details</th>
+        </tr>
+        ${rows}
+      </table>
+      ${manageLink}
+    </div>
+  `;
 }
 
 function shell({ title, eyebrow, bodyHtml }) {
@@ -158,6 +206,8 @@ export function buildApprovalRequestEmail({
   approveUrl,
   rejectUrl,
   previewUrl,
+  manageUrl,
+  activeJobs = [],
   requesterEmail,
   expiresAt,
   isReminder = false,
@@ -183,6 +233,7 @@ export function buildApprovalRequestEmail({
       <strong>No</strong> → reject (unpublished).
       <strong>No reply</strong> → reminders, then request expires.
     </p>
+    ${buildActiveJobsListSection(activeJobs, manageUrl)}
   `;
 
   return {
@@ -277,7 +328,80 @@ export function renderDecisionPage({ ok, decision, jobTitle, message }) {
 </html>`;
 }
 
-export function renderPreviewPage({ job, approveUrl, rejectUrl, decision, expiresAt }) {
+export function renderManageJobsPage({
+  activeJobs,
+  manageUrl,
+  manageToken,
+  successMessage = null,
+  errorMessage = null,
+}) {
+  const base = getPublicApiBase();
+  const postAction = base
+    ? `${base}/api/career/approvals/go?token=${encodeURIComponent(manageToken)}`
+    : "#";
+
+  const listBlock = buildActiveJobsListSection(activeJobs, null);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Remove live job — Tech2Globe Careers</title>
+</head>
+<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f1f5f9;color:#0f172a;">
+  <div style="max-width:720px;margin:32px auto;padding:24px;background:#fff;border-radius:16px;border:1px solid #e2e8f0;">
+    <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">HR — careers page</div>
+    <h1 style="margin:8px 0 6px;font-size:26px;">Remove a job by number</h1>
+    <p style="color:#64748b;margin:0 0 18px;line-height:1.5;">
+      Jobs below match the public careers page (newest first). Enter the <strong>#</strong> to close that listing — it will be set to <strong>inactive</strong> and hidden from the site.
+    </p>
+    ${
+      successMessage
+        ? `<p style="background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:12px 14px;border-radius:10px;margin:0 0 14px;">${escapeHtml(successMessage)}</p>`
+        : ""
+    }
+    ${
+      errorMessage
+        ? `<p style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:12px 14px;border-radius:10px;margin:0 0 14px;">${escapeHtml(errorMessage)}</p>`
+        : ""
+    }
+    ${listBlock}
+    ${
+      activeJobs?.length
+        ? `<form method="POST" action="${postAction}" style="margin-top:20px;padding:16px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
+            <label for="jobNumber" style="display:block;font-weight:700;margin-bottom:8px;font-size:14px;">Job number to remove</label>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+              <input id="jobNumber" name="number" type="number" min="1" max="${activeJobs.length}" required
+                placeholder="e.g. 2"
+                style="width:120px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px;" />
+              <button type="submit" style="background:#dc2626;color:#fff;border:none;padding:11px 18px;border-radius:10px;font-weight:700;cursor:pointer;">
+                Remove from careers page
+              </button>
+            </div>
+            <p style="margin:10px 0 0;font-size:12px;color:#64748b;">This link expires with your approval email. Applications for that job are kept in admin.</p>
+          </form>`
+        : `<p style="margin-top:16px;color:#64748b;">Nothing to remove — no active jobs on the site.</p>`
+    }
+    ${
+      manageUrl
+        ? `<p style="margin-top:18px;font-size:13px;"><a href="${manageUrl}" style="color:#64748b;">Refresh this page</a></p>`
+        : ""
+    }
+  </div>
+</body>
+</html>`;
+}
+
+export function renderPreviewPage({
+  job,
+  approveUrl,
+  rejectUrl,
+  decision,
+  expiresAt,
+  activeJobs = [],
+  manageUrl = null,
+}) {
   const pending = decision === "pending";
   return `<!DOCTYPE html>
 <html>
@@ -300,6 +424,7 @@ export function renderPreviewPage({ job, approveUrl, rejectUrl, decision, expire
           </div>`
         : `<p style="margin-top:12px;">This approval request is already closed.</p>`
     }
+    ${buildActiveJobsListSection(activeJobs, manageUrl)}
   </div>
 </body>
 </html>`;

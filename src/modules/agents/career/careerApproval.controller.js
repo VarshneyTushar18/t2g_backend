@@ -16,7 +16,7 @@ function parseEmailList(value) {
     .filter(Boolean);
 }
 
-/** Public: GET /api/career/approvals/go?token=... */
+/** Public: GET/POST /api/career/approvals/go?token=... */
 export async function go(req, res) {
   try {
     const token = req.query.token || req.body?.token;
@@ -26,6 +26,16 @@ export async function go(req, res) {
         .type("html")
         .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
     }
+
+    if (req.method === "POST") {
+      const result = await approvalService.removeLiveJobByListNumber({
+        token,
+        number: req.body?.number ?? req.query?.number,
+        actorEmail: req.query.email || null,
+      });
+      return res.status(result.status).type("html").send(result.html);
+    }
+
     const result = await approvalService.handleSignedAction({
       token,
       actorEmail: req.query.email || null,

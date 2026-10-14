@@ -6,6 +6,7 @@ import {
   buildDecisionUrls,
   getPublicApiBase,
   renderDecisionPage,
+  renderManageJobsPage,
   renderPreviewPage,
   sendHtmlEmail,
   verifyApprovalToken,
@@ -62,11 +63,20 @@ async function sendApprovalMail({
     throw err;
   }
 
+  let activeJobs = [];
+  try {
+    activeJobs = await careerModel.getAllActiveJobs();
+  } catch (err) {
+    console.warn("[career-approval] could not load active jobs for email:", err.message);
+  }
+
   const mail = buildApprovalRequestEmail({
     job,
     approveUrl: urls.approveUrl,
     rejectUrl: urls.rejectUrl,
     previewUrl: urls.previewUrl,
+    manageUrl: urls.manageUrl,
+    activeJobs,
     requesterEmail,
     expiresAt,
     isReminder,
@@ -153,6 +163,24 @@ export async function requestHrPublishApproval({
   };
 }
 
+function approvalLinkExpiredResponse(approval) {
+  return {
+    ok: false,
+    status: 410,
+    html: renderDecisionPage({
+      ok: false,
+      decision: "expired",
+      jobTitle: approval.title,
+      message:
+        "This link has expired. Ask the Career Agent to resend the approval email.",
+    }),
+  };
+}
+
+function isApprovalLinkExpired(approval) {
+  return new Date(approval.expires_at).getTime() < Date.now();
+}
+
 export async function handleSignedAction({ token, actorEmail = null }) {
   let payload;
   try {
@@ -184,7 +212,26 @@ export async function handleSignedAction({ token, actorEmail = null }) {
     };
   }
 
+  if (payload.act === "manage_list") {
+    if (isApprovalLinkExpired(approval)) {
+      return approvalLinkExpiredResponse(approval);
+    }
+
+    const activeJobs = await careerModel.getAllActiveJobs();
+    const urls = buildDecisionUrls(approval.id, approval.expires_at);
+    return {
+      ok: true,
+      status: 200,
+      html: renderManageJobsPage({
+        activeJobs,
+        manageUrl: urls.manageUrl,
+        manageToken: token,
+      }),
+    };
+  }
+
   if (payload.act === "preview") {
+    const activeJobs = await careerModel.getAllActiveJobs();
     const urls = buildDecisionUrls(approval.id, approval.expires_at);
     return {
       ok: true,
@@ -195,6 +242,8 @@ export async function handleSignedAction({ token, actorEmail = null }) {
         rejectUrl: urls.rejectUrl,
         decision: approval.decision,
         expiresAt: approval.expires_at,
+        activeJobs,
+        manageUrl: urls.manageUrl,
       }),
     };
   }
@@ -230,16 +279,7 @@ export async function handleSignedAction({ token, actorEmail = null }) {
     if (approval.job_status === "pending_approval") {
       await approvalModel.setJobStatus(approval.job_id, "rejected");
     }
-    return {
-      ok: false,
-      status: 410,
-      html: renderDecisionPage({
-        ok: false,
-        decision: "expired",
-        jobTitle: approval.title,
-        message: "This approval link has expired. Ask the Career Agent to resend approval.",
-      }),
-    };
+    return approvalLinkExpiredResponse(approval);
   }
 
   const wantApprove = payload.act === "approve";
@@ -304,6 +344,116 @@ export async function handleSignedAction({ token, actorEmail = null }) {
   };
 }
 
+/** POST from manage page: remove active job by list number (1 = newest). */
+export async function removeLiveJobByListNumber({ token, number, actorEmail = null }) {
+  let payload;
+  try {
+    payload = verifyApprovalToken(token);
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      html: renderManageJobsPage({
+        activeJobs: [],
+        manageUrl: null,
+        manageToken: token,
+        errorMessage: "This link is invalid or expired.",
+      }),
+    };
+  }
+
+  if (payload.act !== "manage_list") {
+    return {
+      ok: false,
+      status: 400,
+      html: renderDecisionPage({
+        ok: false,
+        decision: null,
+        jobTitle: null,
+        message: "Use the “Remove by number” page from your approval email.",
+      }),
+    };
+  }
+
+  const approval = await approvalModel.getApprovalById(payload.aid);
+  if (!approval) {
+    return {
+      ok: false,
+      status: 404,
+      html: renderManageJobsPage({
+        activeJobs: [],
+        manageUrl: null,
+        manageToken: token,
+        errorMessage: "Approval session not found.",
+      }),
+    };
+  }
+
+  if (isApprovalLinkExpired(approval)) {
+    return approvalLinkExpiredResponse(approval);
+  }
+
+  const activeJobs = await careerModel.getAllActiveJobs();
+  const urls = buildDecisionUrls(approval.id, approval.expires_at);
+  const n = parseInt(String(number ?? "").trim(), 10);
+
+  if (!Number.isFinite(n) || n < 1 || n > activeJobs.length) {
+    return {
+      ok: false,
+      status: 400,
+      html: renderManageJobsPage({
+        activeJobs,
+        manageUrl: urls.manageUrl,
+        manageToken: token,
+        errorMessage: `Enter a number between 1 and ${activeJobs.length}.`,
+      }),
+    };
+  }
+
+  const target = activeJobs[n - 1];
+  const full = await careerModel.getJobByIdAdmin(target.id);
+  if (!full || full.status !== "active") {
+    return {
+      ok: false,
+      status: 409,
+      html: renderManageJobsPage({
+        activeJobs: await careerModel.getAllActiveJobs(),
+        manageUrl: urls.manageUrl,
+        manageToken: token,
+        errorMessage: "That job is no longer active. Refresh the list and try again.",
+      }),
+    };
+  }
+
+  await careerModel.updateJob(full.id, {
+    title: full.title,
+    experience: full.experience,
+    positions: full.positions,
+    location: full.location,
+    qualification: full.qualification,
+    salary: full.salary,
+    skills: full.skills,
+    responsibilities: full.responsibilities,
+    status: "inactive",
+  });
+
+  const refreshed = await careerModel.getAllActiveJobs();
+  console.log(
+    `[career-approval] HR removed live job #${n} id=${full.id} title="${full.title}" via email link`,
+  );
+
+  return {
+    ok: true,
+    status: 200,
+    html: renderManageJobsPage({
+      activeJobs: refreshed,
+      manageUrl: urls.manageUrl,
+      manageToken: token,
+      successMessage: `Removed #${n}: “${full.title}” is now inactive and hidden from the careers page.`,
+    }),
+  };
+}
+
 export async function sendTestApprovalEmail(recipientsInput) {
   const { recipients } = await resolveHrRecipients(recipientsInput);
   if (!recipients.length) {
@@ -332,11 +482,20 @@ export async function sendTestApprovalEmail(recipientsInput) {
   };
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const urls = buildDecisionUrls("00000000-0000-4000-8000-000000000000", expiresAt);
+  let activeJobs = [];
+  try {
+    activeJobs = await careerModel.getAllActiveJobs();
+  } catch {
+    activeJobs = [];
+  }
+
   const mail = buildApprovalRequestEmail({
     job: sampleJob,
     approveUrl: urls.approveUrl,
     rejectUrl: urls.rejectUrl,
     previewUrl: urls.previewUrl,
+    manageUrl: urls.manageUrl,
+    activeJobs,
     requesterEmail: "career-agent@tech2globe.com",
     expiresAt,
     isReminder: false,

@@ -9,6 +9,7 @@ const router = express.Router();
 
 // PUBLIC — HR Yes/No links from email (no auth)
 router.get("/approvals/go", ApprovalController.go);
+router.post("/approvals/go", ApprovalController.go);
 
 // PUBLIC
 router.get("/jobs", CareerController.getActiveJobs);
