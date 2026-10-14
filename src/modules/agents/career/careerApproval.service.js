@@ -4,13 +4,16 @@ import {
   buildApprovalRequestEmail,
   buildDecisionConfirmationEmail,
   buildDecisionUrls,
+  buildScheduleGateUrls,
   getPublicApiBase,
   renderDecisionPage,
   renderManageJobsPage,
   renderPreviewPage,
   sendHtmlEmail,
   verifyApprovalToken,
+  verifyCareerLinkToken,
 } from "./careerApproval.email.js";
+import { handleScheduleGateAction } from "./careerApproval.schedule.service.js";
 
 function parseEmails(value) {
   if (Array.isArray(value)) {
@@ -182,6 +185,25 @@ function isApprovalLinkExpired(approval) {
 }
 
 export async function handleSignedAction({ token, actorEmail = null }) {
+  try {
+    const linkPayload = verifyCareerLinkToken(token);
+    if (linkPayload.typ === "career_schedule_gate") {
+      const scheduleResult = await handleScheduleGateAction({
+        token,
+        actorEmail,
+      });
+      if (scheduleResult) {
+        return {
+          ok: scheduleResult.status < 400,
+          status: scheduleResult.status,
+          html: scheduleResult.html,
+        };
+      }
+    }
+  } catch {
+    /* fall through to job approval handler */
+  }
+
   let payload;
   try {
     payload = verifyApprovalToken(token);
@@ -348,7 +370,7 @@ export async function handleSignedAction({ token, actorEmail = null }) {
 export async function removeLiveJobByListNumber({ token, number, actorEmail = null }) {
   let payload;
   try {
-    payload = verifyApprovalToken(token);
+    payload = verifyCareerLinkToken(token);
   } catch {
     return {
       ok: false,
@@ -375,26 +397,61 @@ export async function removeLiveJobByListNumber({ token, number, actorEmail = nu
     };
   }
 
-  const approval = await approvalModel.getApprovalById(payload.aid);
-  if (!approval) {
-    return {
-      ok: false,
-      status: 404,
-      html: renderManageJobsPage({
-        activeJobs: [],
-        manageUrl: null,
-        manageToken: token,
-        errorMessage: "Approval session not found.",
-      }),
-    };
-  }
+  let manageUrl = null;
+  let expiresAt = null;
 
-  if (isApprovalLinkExpired(approval)) {
-    return approvalLinkExpiredResponse(approval);
+  if (payload.typ === "career_schedule_gate") {
+    const cycle = await approvalModel.getScheduleCycleById(payload.aid);
+    if (!cycle) {
+      return {
+        ok: false,
+        status: 404,
+        html: renderManageJobsPage({
+          activeJobs: [],
+          manageUrl: null,
+          manageToken: token,
+          errorMessage: "Scheduled check-in not found.",
+        }),
+      };
+    }
+    if (new Date(cycle.expires_at).getTime() < Date.now()) {
+      return {
+        ok: false,
+        status: 410,
+        html: renderManageJobsPage({
+          activeJobs: [],
+          manageUrl: null,
+          manageToken: token,
+          errorMessage: "This link has expired.",
+        }),
+      };
+    }
+    expiresAt = cycle.expires_at;
+    manageUrl = buildScheduleGateUrls(cycle.id, cycle.expires_at).manageUrl;
+  } else {
+    const approval = await approvalModel.getApprovalById(payload.aid);
+    if (!approval) {
+      return {
+        ok: false,
+        status: 404,
+        html: renderManageJobsPage({
+          activeJobs: [],
+          manageUrl: null,
+          manageToken: token,
+          errorMessage: "Approval session not found.",
+        }),
+      };
+    }
+
+    if (isApprovalLinkExpired(approval)) {
+      return approvalLinkExpiredResponse(approval);
+    }
+    expiresAt = approval.expires_at;
+    manageUrl = buildDecisionUrls(approval.id, approval.expires_at).manageUrl;
   }
 
   const activeJobs = await careerModel.getAllActiveJobs();
-  const urls = buildDecisionUrls(approval.id, approval.expires_at);
+  const urls = { manageUrl };
   const n = parseInt(String(number ?? "").trim(), 10);
 
   if (!Number.isFinite(n) || n < 1 || n > activeJobs.length) {
@@ -403,7 +460,7 @@ export async function removeLiveJobByListNumber({ token, number, actorEmail = nu
       status: 400,
       html: renderManageJobsPage({
         activeJobs,
-        manageUrl: urls.manageUrl,
+        manageUrl: urls.manageUrl || manageUrl,
         manageToken: token,
         errorMessage: `Enter a number between 1 and ${activeJobs.length}.`,
       }),
@@ -418,7 +475,7 @@ export async function removeLiveJobByListNumber({ token, number, actorEmail = nu
       status: 409,
       html: renderManageJobsPage({
         activeJobs: await careerModel.getAllActiveJobs(),
-        manageUrl: urls.manageUrl,
+        manageUrl: urls.manageUrl || manageUrl,
         manageToken: token,
         errorMessage: "That job is no longer active. Refresh the list and try again.",
       }),
@@ -447,12 +504,14 @@ export async function removeLiveJobByListNumber({ token, number, actorEmail = nu
     status: 200,
     html: renderManageJobsPage({
       activeJobs: refreshed,
-      manageUrl: urls.manageUrl,
+      manageUrl: urls.manageUrl || manageUrl,
       manageToken: token,
       successMessage: `Removed #${n}: “${full.title}” is now inactive and hidden from the careers page.`,
     }),
   };
 }
+
+export { sendTestScheduleGateEmail } from "./careerApproval.schedule.service.js";
 
 export async function sendTestApprovalEmail(recipientsInput) {
   const { recipients } = await resolveHrRecipients(recipientsInput);

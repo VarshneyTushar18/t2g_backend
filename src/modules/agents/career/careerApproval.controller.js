@@ -93,6 +93,13 @@ export async function saveSettings(req, res) {
         reminder_hours: body.reminder_hours,
         max_reminders: body.max_reminders,
         expiry_hours: body.expiry_hours,
+        schedule_enabled: body.schedule_enabled,
+        schedule_frequency: body.schedule_frequency,
+        schedule_every_n: body.schedule_every_n,
+        schedule_weekday: body.schedule_weekday,
+        schedule_time_local: body.schedule_time_local,
+        schedule_gate_expiry_hours: body.schedule_gate_expiry_hours,
+        schedule_agent_prompt: body.schedule_agent_prompt,
       },
       req.user?.email || req.user?.sub || null,
     );
@@ -109,6 +116,15 @@ export async function testEmail(req, res) {
     res.json({ ok: true, ...result });
   } catch (err) {
     handleError(res, err, "Failed to send test email");
+  }
+}
+
+export async function testScheduleEmail(req, res) {
+  try {
+    const result = await approvalService.sendTestScheduleGateEmail();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    handleError(res, err, "Failed to send test schedule email");
   }
 }
 

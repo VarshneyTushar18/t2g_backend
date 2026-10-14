@@ -9,6 +9,15 @@ const DEFAULT_SETTINGS = {
   reminder_hours: 24,
   max_reminders: 2,
   expiry_hours: 168,
+  schedule_enabled: false,
+  schedule_frequency: "days",
+  schedule_every_n: 7,
+  schedule_weekday: 1,
+  schedule_time_local: "10:00",
+  schedule_gate_expiry_hours: 72,
+  schedule_agent_prompt: "",
+  schedule_run_days: [],
+  schedule_last_sent_at: null,
 };
 
 function parseJsonArray(value, fallback = []) {
@@ -31,6 +40,18 @@ function mapSettings(row) {
     reminder_hours: Number(row.reminder_hours) || 24,
     max_reminders: Number(row.max_reminders) || 2,
     expiry_hours: Number(row.expiry_hours) || 168,
+    schedule_enabled: Boolean(row.schedule_enabled),
+    schedule_frequency: row.schedule_frequency || "days",
+    schedule_every_n: Math.max(1, Number(row.schedule_every_n) || 7),
+    schedule_weekday: Math.min(7, Math.max(1, Number(row.schedule_weekday) || 1)),
+    schedule_time_local: row.schedule_time_local || "10:00",
+    schedule_gate_expiry_hours: Math.max(
+      1,
+      Number(row.schedule_gate_expiry_hours) || 72,
+    ),
+    schedule_agent_prompt: row.schedule_agent_prompt || "",
+    schedule_run_days: parseJsonArray(row.schedule_run_days, []),
+    schedule_last_sent_at: row.schedule_last_sent_at || null,
     updated_by: row.updated_by || null,
     updated_at: row.updated_at || null,
   };
@@ -86,6 +107,42 @@ export async function ensureCareerApprovalTables() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS career_publish_schedule_cycles (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      decision ENUM('pending', 'accepted', 'declined', 'expired') NOT NULL DEFAULT 'pending',
+      hr_emails JSON NULL,
+      expires_at DATETIME NOT NULL,
+      decided_at DATETIME NULL,
+      drafted_job_id INT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_career_schedule_pending (decision, expires_at)
+    )
+  `);
+
+  const scheduleColumns = [
+    "schedule_enabled TINYINT(1) NOT NULL DEFAULT 0",
+    "schedule_frequency ENUM('days','weeks','months') NOT NULL DEFAULT 'days'",
+    "schedule_every_n INT NOT NULL DEFAULT 7",
+    "schedule_weekday TINYINT NOT NULL DEFAULT 1",
+    "schedule_time_local VARCHAR(5) NOT NULL DEFAULT '10:00'",
+    "schedule_gate_expiry_hours INT NOT NULL DEFAULT 72",
+    "schedule_agent_prompt TEXT NULL",
+    "schedule_run_days JSON NULL",
+    "schedule_last_sent_at DATETIME NULL",
+  ];
+  for (const col of scheduleColumns) {
+    try {
+      await pool.query(
+        `ALTER TABLE career_agent_approval_settings ADD COLUMN ${col}`,
+      );
+    } catch (err) {
+      if (!String(err.message || "").includes("Duplicate column")) {
+        console.warn("[career-approval] schedule column migrate:", err.message);
+      }
+    }
+  }
+
   try {
     await pool.query(`
       ALTER TABLE jobs
@@ -132,6 +189,38 @@ export async function saveSettings(payload, updatedBy = null) {
       1,
       Number(payload.expiry_hours ?? current.expiry_hours) || 168,
     ),
+    schedule_enabled:
+      payload.schedule_enabled !== undefined
+        ? Boolean(payload.schedule_enabled)
+        : current.schedule_enabled,
+    schedule_frequency: ["days", "weeks", "months"].includes(
+      payload.schedule_frequency,
+    )
+      ? payload.schedule_frequency
+      : current.schedule_frequency,
+    schedule_every_n: Math.max(
+      1,
+      Number(payload.schedule_every_n ?? current.schedule_every_n) || 7,
+    ),
+    schedule_weekday: Math.min(
+      7,
+      Math.max(1, Number(payload.schedule_weekday ?? current.schedule_weekday) || 1),
+    ),
+    schedule_time_local: String(
+      payload.schedule_time_local ?? current.schedule_time_local ?? "10:00",
+    ).slice(0, 5),
+    schedule_gate_expiry_hours: Math.max(
+      1,
+      Number(payload.schedule_gate_expiry_hours ?? current.schedule_gate_expiry_hours) ||
+        72,
+    ),
+    schedule_agent_prompt:
+      payload.schedule_agent_prompt !== undefined
+        ? String(payload.schedule_agent_prompt || "")
+        : current.schedule_agent_prompt,
+    schedule_run_days: Array.isArray(payload.schedule_run_days)
+      ? payload.schedule_run_days
+      : current.schedule_run_days,
   };
 
   await pool.query(
@@ -142,6 +231,14 @@ export async function saveSettings(payload, updatedBy = null) {
       reminder_hours = ?,
       max_reminders = ?,
       expiry_hours = ?,
+      schedule_enabled = ?,
+      schedule_frequency = ?,
+      schedule_every_n = ?,
+      schedule_weekday = ?,
+      schedule_time_local = ?,
+      schedule_gate_expiry_hours = ?,
+      schedule_agent_prompt = ?,
+      schedule_run_days = ?,
       updated_by = ?
      WHERE id = 1`,
     [
@@ -151,6 +248,14 @@ export async function saveSettings(payload, updatedBy = null) {
       next.reminder_hours,
       next.max_reminders,
       next.expiry_hours,
+      next.schedule_enabled ? 1 : 0,
+      next.schedule_frequency,
+      next.schedule_every_n,
+      next.schedule_weekday,
+      next.schedule_time_local,
+      next.schedule_gate_expiry_hours,
+      next.schedule_agent_prompt || null,
+      JSON.stringify(next.schedule_run_days || []),
       updatedBy,
     ],
   );
@@ -333,4 +438,69 @@ export async function setJobStatus(jobId, status) {
   await pool.query(`UPDATE jobs SET status = ? WHERE id = ?`, [status, jobId]);
   const [rows] = await pool.query(`SELECT * FROM jobs WHERE id = ?`, [jobId]);
   return rows[0] || null;
+}
+
+export async function createScheduleCycle({ hrEmails, expiryHours }) {
+  await ensureCareerApprovalTables();
+  const id = uuidv4();
+  const hours = Math.max(1, Number(expiryHours) || 72);
+  const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+  await pool.query(
+    `INSERT INTO career_publish_schedule_cycles (id, decision, hr_emails, expires_at)
+     VALUES (?, 'pending', ?, ?)`,
+    [id, JSON.stringify(hrEmails || []), expiresAt],
+  );
+  return { id, expiresAt, hrEmails: hrEmails || [] };
+}
+
+export async function getScheduleCycleById(id) {
+  await ensureCareerApprovalTables();
+  const [rows] = await pool.query(
+    `SELECT * FROM career_publish_schedule_cycles WHERE id = ? LIMIT 1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    ...row,
+    hr_emails: parseJsonArray(row.hr_emails, []),
+  };
+}
+
+export async function getPendingScheduleCycle() {
+  const [rows] = await pool.query(
+    `SELECT * FROM career_publish_schedule_cycles
+     WHERE decision = 'pending' AND expires_at > NOW()
+     ORDER BY created_at DESC LIMIT 1`,
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    ...row,
+    hr_emails: parseJsonArray(row.hr_emails, []),
+  };
+}
+
+export async function markScheduleCycleDecision(id, decision, draftedJobId = null) {
+  await pool.query(
+    `UPDATE career_publish_schedule_cycles
+     SET decision = ?, decided_at = NOW(), drafted_job_id = ?
+     WHERE id = ? AND decision = 'pending'`,
+    [decision, draftedJobId, id],
+  );
+  return getScheduleCycleById(id);
+}
+
+export async function expireStaleScheduleCycles() {
+  await pool.query(
+    `UPDATE career_publish_schedule_cycles
+     SET decision = 'expired', decided_at = NOW()
+     WHERE decision = 'pending' AND expires_at < NOW()`,
+  );
+}
+
+export async function touchScheduleLastSent() {
+  await pool.query(
+    `UPDATE career_agent_approval_settings SET schedule_last_sent_at = NOW() WHERE id = 1`,
+  );
 }

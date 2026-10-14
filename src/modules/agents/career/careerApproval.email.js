@@ -60,6 +60,112 @@ export function verifyApprovalToken(token) {
   return payload;
 }
 
+export function signScheduleToken(cycleId, action, expiresAt) {
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  const expiresIn = Math.max(60, Math.floor(ms / 1000));
+  return jwt.sign(
+    { aid: cycleId, act: action, typ: "career_schedule_gate" },
+    approvalSecret(),
+    { expiresIn },
+  );
+}
+
+export function verifyCareerLinkToken(token) {
+  const payload = jwt.verify(String(token || ""), approvalSecret());
+  const typ = payload?.typ;
+  if (
+    !payload?.aid ||
+    !payload?.act ||
+    (typ !== "career_job_approval" && typ !== "career_schedule_gate")
+  ) {
+    const err = new Error("Invalid link token");
+    err.status = 400;
+    throw err;
+  }
+  return payload;
+}
+
+export function buildScheduleGateUrls(cycleId, expiresAt) {
+  const base = getPublicApiBase();
+  if (!base) {
+    return { yesUrl: null, noUrl: null, manageUrl: null, missingBase: true };
+  }
+  const root = `${base}/api/career/approvals`;
+  const yes = signScheduleToken(cycleId, "schedule_yes", expiresAt);
+  const no = signScheduleToken(cycleId, "schedule_no", expiresAt);
+  const manage = signScheduleToken(cycleId, "manage_list", expiresAt);
+  return {
+    yesUrl: `${root}/go?token=${encodeURIComponent(yes)}`,
+    noUrl: `${root}/go?token=${encodeURIComponent(no)}`,
+    manageUrl: `${root}/go?token=${encodeURIComponent(manage)}`,
+    manageToken: manage,
+    missingBase: false,
+  };
+}
+
+export function buildScheduleGateEmail({
+  expiresAt,
+  yesUrl,
+  noUrl,
+  manageUrl,
+  activeJobs = [],
+  scheduleLabel,
+}) {
+  const title = "Should the Career Assistant draft a job to publish?";
+  const bodyHtml = `
+    <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">
+      Scheduled HR check-in (${escapeHtml(scheduleLabel || "recurring")}).
+      The assistant can draft a new role from your career guidelines and email you the full job description with <strong>Yes — Publish</strong> / <strong>No</strong> (same as manual agent flow).
+    </p>
+    <p style="margin:0 0 8px;font-size:14px;color:#475569;">
+      Respond by: <strong>${escapeHtml(new Date(expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))} IST</strong>
+    </p>
+    <p style="margin:0 0 14px;font-size:15px;"><strong>Do you want a new job drafted for approval?</strong></p>
+    <table role="presentation" cellspacing="0" cellpadding="0" style="margin:8px 0 18px;">
+      <tr>
+        <td style="padding-right:10px;padding-bottom:10px;">
+          <a href="${yesUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">Yes — Draft &amp; send job for approval</a>
+        </td>
+        <td style="padding-bottom:10px;">
+          <a href="${noUrl}" style="display:inline-block;background:#64748b;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">No — Skip this cycle</a>
+        </td>
+      </tr>
+    </table>
+    <p style="font-size:12px;color:#64748b;margin:0;">
+      <strong>Yes</strong> → AI drafts one job (pending) and you get the detailed publish email.
+      <strong>No</strong> → nothing happens until the next scheduled check-in.
+    </p>
+    ${buildActiveJobsListSection(activeJobs, manageUrl)}
+  `;
+
+  return {
+    subject: `[Scheduled] Draft a new careers page job?`,
+    html: shell({
+      title,
+      eyebrow: "HR Scheduled Check-in",
+      bodyHtml,
+    }),
+  };
+}
+
+export function renderScheduleGateDecisionPage({ ok, accepted, message }) {
+  const color = !ok ? "#b45309" : accepted ? "#15803d" : "#64748b";
+  const headline = !ok
+    ? "Unable to complete"
+    : accepted
+      ? "Draft started"
+      : "Skipped this cycle";
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><title>${escapeHtml(headline)}</title></head>
+<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f8fafc;color:#0f172a;">
+  <div style="max-width:560px;margin:48px auto;padding:28px;background:#fff;border:1px solid #e2e8f0;border-radius:16px;">
+    <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Tech2Globe Career Assistant</div>
+    <h1 style="margin:10px 0 8px;font-size:28px;color:${color};">${escapeHtml(headline)}</h1>
+    <p style="margin:0;font-size:16px;line-height:1.6;">${escapeHtml(message)}</p>
+  </div>
+</body></html>`;
+}
+
 export function buildDecisionUrls(approvalId, expiresAt) {
   const base = getPublicApiBase();
   if (!base) {

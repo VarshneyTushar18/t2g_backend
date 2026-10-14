@@ -174,3 +174,39 @@ export async function sendMessage({ user, threadId, message }) {
     durationMs: Date.now() - started,
   };
 }
+
+/** Cron / scheduled gate: draft one job without admin chat. */
+export async function runScheduledJobDraft({
+  prompt,
+  requesterEmail = "career-scheduler@tech2globe.com",
+}) {
+  const user = {
+    role: "admin",
+    email: requesterEmail,
+    sub: "career-scheduler",
+    id: "career-scheduler",
+    permissions: { career: { view: true, add: true, edit: true, delete: true } },
+  };
+
+  const thread = await model.createThread({
+    userId: user.sub,
+    userEmail: user.email,
+    title: "Scheduled job draft",
+    agentType: "career",
+  });
+
+  const trimmed = String(prompt || "").trim();
+  if (!trimmed) {
+    throw new Error("schedule_agent_prompt is empty");
+  }
+
+  await model.addMessage({ threadId: thread.id, role: "user", content: trimmed });
+  const result = await runCareerAgent({ user, threadId: thread.id, message: trimmed });
+  await model.addMessage({
+    threadId: thread.id,
+    role: "assistant",
+    content: result.output,
+    toolOutput: { scheduled: true },
+  });
+  return { threadId: thread.id, output: result.output };
+}
