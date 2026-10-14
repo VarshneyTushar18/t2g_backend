@@ -278,19 +278,11 @@ export async function sendTestScheduleGateEmail() {
   const mode = settings.schedule_mode || "publish_email";
 
   if (mode === "publish_email") {
-    const result = await runScheduleAutoDraft({ force: true, settings });
-    if (!result.sent) {
-      const err = new Error(result.error || "Auto-draft failed");
-      err.status = 500;
-      throw err;
-    }
-    const { recipients } = await resolveHrRecipients(null);
-    return {
-      sent: true,
-      mode: "publish_email",
-      recipients,
-      note: "HR should receive the full “Should we publish …?” email with job details (not the short check-in).",
-    };
+    const err = new Error(
+      "Use POST /api/career/admin/approvals/test-email for a guaranteed publish test email. “Run check-in now” runs the real AI draft.",
+    );
+    err.status = 400;
+    throw err;
   }
 
   const { recipients } = await resolveHrRecipients(null);
