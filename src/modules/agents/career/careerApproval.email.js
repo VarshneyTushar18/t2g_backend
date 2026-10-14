@@ -94,11 +94,14 @@ export function buildScheduleGateUrls(cycleId, expiresAt) {
   const yes = signScheduleToken(cycleId, "schedule_yes", expiresAt);
   const no = signScheduleToken(cycleId, "schedule_no", expiresAt);
   const manage = signScheduleToken(cycleId, "manage_list", expiresAt);
+  const intake = signScheduleToken(cycleId, "intake_form", expiresAt);
   return {
     yesUrl: `${root}/go?token=${encodeURIComponent(yes)}`,
     noUrl: `${root}/go?token=${encodeURIComponent(no)}`,
     manageUrl: `${root}/go?token=${encodeURIComponent(manage)}`,
     manageToken: manage,
+    intakeFormUrl: `${root}/go?token=${encodeURIComponent(intake)}`,
+    intakeToken: intake,
     missingBase: false,
   };
 }
@@ -111,41 +114,106 @@ export function buildScheduleGateEmail({
   activeJobs = [],
   scheduleLabel,
 }) {
-  const title = "Should the Career Assistant draft a job to publish?";
+  const title = "Do you want to publish a new job on the careers page?";
   const bodyHtml = `
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">
-      Scheduled HR check-in (${escapeHtml(scheduleLabel || "recurring")}).
-      The assistant can draft a new role from your career guidelines and email you the full job description with <strong>Yes — Publish</strong> / <strong>No</strong> (same as manual agent flow).
+      Scheduled check-in (${escapeHtml(scheduleLabel || "recurring")}). Reply with <strong>Yes</strong> or <strong>No</strong> below.
     </p>
     <p style="margin:0 0 8px;font-size:14px;color:#475569;">
       Respond by: <strong>${escapeHtml(new Date(expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))} IST</strong>
     </p>
-    <p style="margin:0 0 14px;font-size:15px;"><strong>Do you want a new job drafted for approval?</strong></p>
+    <p style="margin:0 0 14px;font-size:15px;"><strong>Do you want to publish a job?</strong></p>
     <table role="presentation" cellspacing="0" cellpadding="0" style="margin:8px 0 18px;">
       <tr>
         <td style="padding-right:10px;padding-bottom:10px;">
-          <a href="${yesUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">Yes — Draft &amp; send job for approval</a>
+          <a href="${yesUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">Yes — Publish</a>
         </td>
         <td style="padding-bottom:10px;">
-          <a href="${noUrl}" style="display:inline-block;background:#64748b;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">No — Skip this cycle</a>
+          <a href="${noUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">No</a>
         </td>
       </tr>
     </table>
-    <p style="font-size:12px;color:#64748b;margin:0;">
-      <strong>Yes</strong> → AI drafts one job (pending) and you get the detailed publish email.
+    <p style="font-size:12px;color:#64748b;margin:0 0 20px;">
+      <strong>Yes</strong> → we email you a short form to describe the role; the Career Agent drafts it and sends the usual publish approval email.<br/>
       <strong>No</strong> → nothing happens until the next scheduled check-in.
     </p>
+    <h3 style="margin:0 0 10px;font-size:15px;">Remove a job from the careers page</h3>
+    <p style="margin:0 0 10px;font-size:14px;color:#475569;">Use the numbered list below or open the remove page to take a listing offline (same email).</p>
     ${buildActiveJobsListSection(activeJobs, manageUrl)}
   `;
 
   return {
-    subject: `[Scheduled] Draft a new careers page job?`,
+    subject: `[Scheduled] Publish a new job on careers page?`,
     html: shell({
       title,
       eyebrow: "HR Scheduled Check-in",
       bodyHtml,
     }),
   };
+}
+
+export function buildPublishIntakeEmail({ intakeFormUrl, expiresAt }) {
+  const title = "What do you want to publish?";
+  const bodyHtml = `
+    <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">
+      You chose <strong>Yes — Publish</strong>. Open the secure form and describe the role (title, skills, experience, responsibilities — paste a JD or bullet points).
+    </p>
+    <p style="margin:0 0 14px;font-size:14px;color:#475569;">
+      Complete by: <strong>${escapeHtml(new Date(expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))} IST</strong>
+    </p>
+    <p style="margin:0 0 18px;">
+      <a href="${intakeFormUrl}" style="display:inline-block;background:#1d4ed8;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">Open job details form</a>
+    </p>
+    <p style="font-size:12px;color:#64748b;margin:0;">
+      After you submit, the Career Agent creates the job and emails you the final <strong>Yes — Publish job / No</strong> approval with the full description.
+    </p>
+  `;
+  return {
+    subject: `[Action needed] Describe the job to publish`,
+    html: shell({
+      title,
+      eyebrow: "HR — job details",
+      bodyHtml,
+    }),
+  };
+}
+
+export function renderPublishIntakeFormPage({
+  manageUrl,
+  activeJobs,
+  errorMessage = null,
+  intakeToken,
+}) {
+  const base = getPublicApiBase();
+  const postAction = base
+    ? `${base}/api/career/approvals/go?token=${encodeURIComponent(intakeToken || "")}`
+    : "#";
+  const listBlock = buildActiveJobsListSection(activeJobs, manageUrl);
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Job details for publish</title></head>
+<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f1f5f9;color:#0f172a;">
+<div style="max-width:720px;margin:32px auto;padding:24px;background:#fff;border-radius:16px;border:1px solid #e2e8f0;">
+  <div style="font-size:12px;text-transform:uppercase;color:#64748b;">Tech2Globe Career Assistant</div>
+  <h1 style="margin:8px 0 6px;font-size:26px;">What do you want to publish?</h1>
+  <p style="color:#64748b;line-height:1.5;">Fill in the role details below and tap <strong>Send to Career Agent</strong>. You will receive a follow-up email to confirm publish (Yes/No) with the full job description.</p>
+  ${errorMessage ? `<p style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:12px;border-radius:10px;">${escapeHtml(errorMessage)}</p>` : ""}
+  <form method="POST" action="${postAction}" style="margin:18px 0;">
+    <label style="display:block;font-weight:700;margin-bottom:6px;font-size:14px;">Job title (optional)</label>
+    <input name="title_hint" type="text" placeholder="e.g. PPC Specialist"
+      style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;margin-bottom:14px;" />
+    <label style="display:block;font-weight:700;margin-bottom:6px;font-size:14px;">Job details / comments <span style="color:#dc2626">*</span></label>
+    <textarea name="comment" required rows="10" placeholder="Paste JD, skills, experience, location, responsibilities…"
+      style="width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px;line-height:1.5;"></textarea>
+    <button type="submit" style="margin-top:14px;background:#16a34a;color:#fff;border:none;padding:12px 20px;border-radius:10px;font-weight:700;cursor:pointer;font-size:15px;">
+      Send to Career Agent
+    </button>
+  </form>
+  <h2 style="font-size:17px;margin:24px 0 8px;">Remove a live job</h2>
+  <p style="color:#64748b;font-size:14px;margin:0 0 8px;">Enter a list number on the remove page (optional note when removing).</p>
+  ${listBlock}
+</div></body></html>`;
 }
 
 export function renderScheduleGateDecisionPage({ ok, accepted, message }) {
@@ -477,14 +545,16 @@ export function renderManageJobsPage({
       activeJobs?.length
         ? `<form method="POST" action="${postAction}" style="margin-top:20px;padding:16px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
             <label for="jobNumber" style="display:block;font-weight:700;margin-bottom:8px;font-size:14px;">Job number to remove</label>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-              <input id="jobNumber" name="number" type="number" min="1" max="${activeJobs.length}" required
-                placeholder="e.g. 2"
-                style="width:120px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px;" />
-              <button type="submit" style="background:#dc2626;color:#fff;border:none;padding:11px 18px;border-radius:10px;font-weight:700;cursor:pointer;">
-                Remove from careers page
-              </button>
-            </div>
+            <label style="display:block;font-weight:700;margin-bottom:6px;font-size:13px;">Job # to remove</label>
+            <input id="jobNumber" name="number" type="number" min="1" max="${activeJobs.length}" required
+              placeholder="e.g. 2"
+              style="width:120px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px;margin-bottom:12px;" />
+            <label style="display:block;font-weight:700;margin-bottom:6px;font-size:13px;">Comment (optional)</label>
+            <textarea name="remove_comment" rows="3" placeholder="Why this role is being removed…"
+              style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px;margin-bottom:12px;"></textarea>
+            <button type="submit" style="background:#dc2626;color:#fff;border:none;padding:11px 18px;border-radius:10px;font-weight:700;cursor:pointer;">
+              Remove from careers page
+            </button>
             <p style="margin:10px 0 0;font-size:12px;color:#64748b;">This link expires with your approval email. Applications for that job are kept in admin.</p>
           </form>`
         : `<p style="margin-top:16px;color:#64748b;">Nothing to remove — no active jobs on the site.</p>`

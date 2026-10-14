@@ -1,5 +1,7 @@
 import * as approvalModel from "./careerApproval.model.js";
 import * as approvalService from "./careerApproval.service.js";
+import { handlePublishIntakeSubmit } from "./careerApproval.schedule.service.js";
+import { verifyCareerLinkToken } from "./careerApproval.email.js";
 
 function handleError(res, err, fallback) {
   console.error(fallback, err);
@@ -28,9 +30,28 @@ export async function go(req, res) {
     }
 
     if (req.method === "POST") {
+      try {
+        const payload = verifyCareerLinkToken(token);
+        if (
+          payload.typ === "career_schedule_gate" &&
+          payload.act === "intake_form"
+        ) {
+          const result = await handlePublishIntakeSubmit({
+            token,
+            title_hint: req.body?.title_hint,
+            comment: req.body?.comment,
+            actorEmail: req.query.email || null,
+          });
+          return res.status(result.status).type("html").send(result.html);
+        }
+      } catch {
+        /* fall through to remove-by-number */
+      }
+
       const result = await approvalService.removeLiveJobByListNumber({
         token,
         number: req.body?.number ?? req.query?.number,
+        removeComment: req.body?.remove_comment,
         actorEmail: req.query.email || null,
       });
       return res.status(result.status).type("html").send(result.html);

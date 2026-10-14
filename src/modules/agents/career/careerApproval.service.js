@@ -367,7 +367,12 @@ export async function handleSignedAction({ token, actorEmail = null }) {
 }
 
 /** POST from manage page: remove active job by list number (1 = newest). */
-export async function removeLiveJobByListNumber({ token, number, actorEmail = null }) {
+export async function removeLiveJobByListNumber({
+  token,
+  number,
+  removeComment = null,
+  actorEmail = null,
+}) {
   let payload;
   try {
     payload = verifyCareerLinkToken(token);
@@ -496,7 +501,7 @@ export async function removeLiveJobByListNumber({ token, number, actorEmail = nu
 
   const refreshed = await careerModel.getAllActiveJobs();
   console.log(
-    `[career-approval] HR removed live job #${n} id=${full.id} title="${full.title}" via email link`,
+    `[career-approval] HR removed live job #${n} id=${full.id} title="${full.title}" via email link${removeComment ? ` comment="${String(removeComment).slice(0, 200)}"` : ""}`,
   );
 
   return {

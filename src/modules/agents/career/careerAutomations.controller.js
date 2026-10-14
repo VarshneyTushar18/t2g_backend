@@ -1,6 +1,5 @@
 import * as automationService from "./careerAutomations.service.js";
 import * as topicModel from "./careerAutomations.model.js";
-import { sendTestApprovalEmail } from "./careerApproval.service.js";
 import * as approvalModel from "./careerApproval.model.js";
 
 function handleError(res, err, fallback) {
@@ -97,20 +96,6 @@ export async function testScheduleEmail(req, res) {
   try {
     const settings = await approvalModel.getSettings();
     const mode = settings.schedule_mode || "publish_email";
-
-    if (mode === "publish_email") {
-      const emails = parseEmailList(
-        req.body?.approval_emails ?? settings.approval_emails,
-      );
-      const result = await sendTestApprovalEmail(emails);
-      return res.json({
-        ok: true,
-        mode: "publish_email",
-        ...result,
-        note:
-          "Sent the full HR publish email (sample job + Yes/No + live jobs). Live cron uses AI to draft a real job then sends the same style of email.",
-      });
-    }
 
     const result = await automationService.sendTestScheduleGateEmail();
     res.json({ ok: true, ...result });

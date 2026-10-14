@@ -1,10 +1,12 @@
 import * as approvalModel from "./careerApproval.model.js";
 import * as careerModel from "../../career/career.model.js";
 import {
+  buildPublishIntakeEmail,
   buildScheduleGateEmail,
   buildScheduleGateUrls,
   getPublicApiBase,
   renderManageJobsPage,
+  renderPublishIntakeFormPage,
   renderScheduleGateDecisionPage,
   sendHtmlEmail,
   verifyCareerLinkToken,
@@ -211,11 +213,6 @@ export async function runScheduleGateTick({ force = false } = {}) {
     return { ran: false, reason: "not_due" };
   }
 
-  const mode = settings.schedule_mode || "publish_email";
-  if (mode === "publish_email") {
-    return runScheduleAutoDraft({ force: true, settings });
-  }
-
   const pending = await approvalModel.getPendingScheduleCycle();
   if (pending) {
     return { ran: false, reason: "pending_cycle_exists" };
@@ -274,17 +271,6 @@ export async function sendTestScheduleGateEmail() {
     err.status = 503;
     throw err;
   }
-  const settings = await approvalModel.getSettings();
-  const mode = settings.schedule_mode || "publish_email";
-
-  if (mode === "publish_email") {
-    const err = new Error(
-      "Use POST /api/career/admin/approvals/test-email for a guaranteed publish test email. “Run check-in now” runs the real AI draft.",
-    );
-    err.status = 400;
-    throw err;
-  }
-
   const { recipients } = await resolveHrRecipients(null);
   if (!recipients.length) {
     const err = new Error("Add at least one HR email");
@@ -374,12 +360,38 @@ export async function handleScheduleGateAction({ token, actorEmail = null }) {
     };
   }
 
+  if (payload.act === "intake_form") {
+    if (cycle.decision !== "awaiting_intake") {
+      return {
+        status: 409,
+        html: renderScheduleGateDecisionPage({
+          ok: false,
+          accepted: false,
+          message:
+            cycle.decision === "completed"
+              ? "This form was already submitted."
+              : "Open the link from the “Describe the job” email after you click Yes — Publish.",
+        }),
+      };
+    }
+    const activeJobs = await careerModel.getAllActiveJobs();
+    const urls = buildScheduleGateUrls(cycle.id, cycle.expires_at);
+    return {
+      status: 200,
+      html: renderPublishIntakeFormPage({
+        activeJobs,
+        manageUrl: urls.manageUrl,
+        intakeToken: token,
+      }),
+    };
+  }
+
   if (cycle.decision !== "pending") {
     return {
       status: 409,
       html: renderScheduleGateDecisionPage({
         ok: false,
-        accepted: cycle.decision === "accepted",
+        accepted: cycle.decision === "awaiting_intake" || cycle.decision === "completed",
         message: `This check-in was already ${cycle.decision}.`,
       }),
     };
@@ -392,8 +404,7 @@ export async function handleScheduleGateAction({ token, actorEmail = null }) {
       html: renderScheduleGateDecisionPage({
         ok: true,
         accepted: false,
-        message:
-          "No problem. The Career Assistant will not draft a job this cycle. You will get the next scheduled check-in email when it is due.",
+        message: "Understood. No job will be published this cycle.",
       }),
     };
   }
@@ -409,29 +420,19 @@ export async function handleScheduleGateAction({ token, actorEmail = null }) {
     };
   }
 
-  await approvalModel.markScheduleCycleDecision(cycle.id, "accepted");
+  await approvalModel.markScheduleCycleDecision(cycle.id, "awaiting_intake");
 
-  const settings = await approvalModel.getSettings();
-
-  setImmediate(async () => {
-    let topicId = null;
-    try {
-      const built = await buildDraftPromptFromQueue(settings);
-      const prompt = typeof built === "string" ? built : built.prompt;
-      topicId = typeof built === "string" ? null : built.topicId;
-      await runScheduledJobDraft({
-        prompt,
-        requesterEmail: actorEmail || "career-scheduler@tech2globe.com",
-      });
-      if (topicId) {
-        await topicModel.markTopicDraftReady(topicId, null);
-      }
-    } catch (err) {
-      console.error("[career-schedule] scheduled draft failed:", err.message);
-      if (topicId) {
-        await topicModel.markTopicFailed(topicId, err.message);
-      }
-    }
+  const urls = buildScheduleGateUrls(cycle.id, cycle.expires_at);
+  const intakeMail = buildPublishIntakeEmail({
+    intakeFormUrl: urls.intakeFormUrl,
+    expiresAt: cycle.expires_at,
+  });
+  const recipients = parseEmails(cycle.hr_emails);
+  await sendHtmlEmail({
+    to: recipients,
+    subject: intakeMail.subject,
+    html: intakeMail.html,
+    replyTo: actorEmail || undefined,
   });
 
   return {
@@ -440,7 +441,122 @@ export async function handleScheduleGateAction({ token, actorEmail = null }) {
       ok: true,
       accepted: true,
       message:
-        "Thank you. The Career Assistant is drafting a job now. You will receive a separate email with the full job description and Yes/No publish buttons shortly (same as the test approval email).",
+        "Thank you. Check your inbox for the next email: “What do you want to publish?” — open the form, add job details, and send to the Career Agent.",
     }),
   };
+}
+
+export async function handlePublishIntakeSubmit({
+  token,
+  title_hint,
+  comment,
+  actorEmail = null,
+}) {
+  let payload;
+  try {
+    payload = verifyCareerLinkToken(token);
+  } catch {
+    return {
+      status: 400,
+      html: renderScheduleGateDecisionPage({
+        ok: false,
+        accepted: false,
+        message: "This form link is invalid or expired.",
+      }),
+    };
+  }
+
+  if (payload.typ !== "career_schedule_gate" || payload.act !== "intake_form") {
+    return {
+      status: 400,
+      html: renderScheduleGateDecisionPage({
+        ok: false,
+        accepted: false,
+        message: "Invalid form submission.",
+      }),
+    };
+  }
+
+  const cycle = await approvalModel.getScheduleCycleById(payload.aid);
+  if (!cycle || cycle.decision !== "awaiting_intake") {
+    return {
+      status: 409,
+      html: renderScheduleGateDecisionPage({
+        ok: false,
+        accepted: false,
+        message: "This form is closed or already submitted.",
+      }),
+    };
+  }
+
+  const text = String(comment || "").trim();
+  if (text.length < 20) {
+    const activeJobs = await careerModel.getAllActiveJobs();
+    const urls = buildScheduleGateUrls(cycle.id, cycle.expires_at);
+    return {
+      status: 400,
+      html: renderPublishIntakeFormPage({
+        activeJobs,
+        manageUrl: urls.manageUrl,
+        intakeToken: token,
+        errorMessage: "Please enter at least a few lines describing the job (20+ characters).",
+      }),
+    };
+  }
+
+  await approvalModel.saveScheduleIntakeNotes(cycle.id, text, actorEmail);
+
+  const settings = await approvalModel.getSettings();
+  const titleLine = String(title_hint || "").trim();
+  const prompt = [
+    "HR submitted this via the scheduled careers publish form. Create ONE job post from it.",
+    titleLine ? `Preferred title: ${titleLine}` : "",
+    `HR comments / JD:\n${text}`,
+    "Call create_job_post with full skills and responsibilities. Use pending_approval and notify HR by email.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  let topicId = null;
+  try {
+    const built = await buildDraftPromptFromQueue(settings);
+    if (typeof built !== "string" && built.topicId) {
+      topicId = built.topicId;
+    }
+    await runScheduledJobDraft({
+      prompt,
+      requesterEmail: actorEmail || "hr-form@tech2globe.com",
+    });
+    if (topicId) {
+      await topicModel.markTopicDraftReady(topicId, null);
+    }
+    await approvalModel.markScheduleCycleDecision(cycle.id, "completed", {
+      fromStates: ["awaiting_intake"],
+    });
+    return {
+      status: 200,
+      html: renderScheduleGateDecisionPage({
+        ok: true,
+        accepted: true,
+        message:
+          "Sent to the Career Agent. You will receive the usual email with the full job description and Yes — Publish / No buttons shortly.",
+      }),
+    };
+  } catch (err) {
+    console.error("[career-schedule] intake submit failed:", err.message);
+    if (topicId) {
+      await topicModel.markTopicFailed(topicId, err.message);
+    }
+    const activeJobs = await careerModel.getAllActiveJobs();
+    const urls = buildScheduleGateUrls(cycle.id, cycle.expires_at);
+    return {
+      status: 500,
+      html: renderPublishIntakeFormPage({
+        activeJobs,
+        manageUrl: urls.manageUrl,
+        intakeToken: token,
+        errorMessage: err.message || "Career Agent could not create the job. Check AI keys and try again.",
+      }),
+    };
+  }
 }

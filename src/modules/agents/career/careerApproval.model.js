@@ -113,15 +113,31 @@ export async function ensureCareerApprovalTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS career_publish_schedule_cycles (
       id CHAR(36) NOT NULL PRIMARY KEY,
-      decision ENUM('pending', 'accepted', 'declined', 'expired') NOT NULL DEFAULT 'pending',
+      decision VARCHAR(32) NOT NULL DEFAULT 'pending',
       hr_emails JSON NULL,
       expires_at DATETIME NOT NULL,
       decided_at DATETIME NULL,
       drafted_job_id INT NULL,
+      intake_notes TEXT NULL,
+      requester_email VARCHAR(191) NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       KEY idx_career_schedule_pending (decision, expires_at)
     )
   `);
+
+  for (const sql of [
+    "ALTER TABLE career_publish_schedule_cycles MODIFY decision VARCHAR(32) NOT NULL DEFAULT 'pending'",
+    "ALTER TABLE career_publish_schedule_cycles ADD COLUMN intake_notes TEXT NULL",
+    "ALTER TABLE career_publish_schedule_cycles ADD COLUMN requester_email VARCHAR(191) NULL",
+  ]) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      if (!String(err.message || "").includes("Duplicate column")) {
+        console.warn("[career-approval] cycle migrate:", err.message);
+      }
+    }
+  }
 
   const scheduleColumns = [
     "schedule_enabled TINYINT(1) NOT NULL DEFAULT 0",
@@ -492,12 +508,28 @@ export async function getPendingScheduleCycle() {
   };
 }
 
-export async function markScheduleCycleDecision(id, decision, draftedJobId = null) {
+export async function markScheduleCycleDecision(
+  id,
+  decision,
+  { draftedJobId = null, fromStates = ["pending"] } = {},
+) {
+  const states = fromStates.length ? fromStates : ["pending"];
+  const placeholders = states.map(() => "?").join(", ");
   await pool.query(
     `UPDATE career_publish_schedule_cycles
-     SET decision = ?, decided_at = NOW(), drafted_job_id = ?
-     WHERE id = ? AND decision = 'pending'`,
-    [decision, draftedJobId, id],
+     SET decision = ?, decided_at = NOW(), drafted_job_id = COALESCE(?, drafted_job_id)
+     WHERE id = ? AND decision IN (${placeholders})`,
+    [decision, draftedJobId, id, ...states],
+  );
+  return getScheduleCycleById(id);
+}
+
+export async function saveScheduleIntakeNotes(id, notes, requesterEmail = null) {
+  await pool.query(
+    `UPDATE career_publish_schedule_cycles
+     SET intake_notes = ?, requester_email = ?
+     WHERE id = ?`,
+    [notes, requesterEmail, id],
   );
   return getScheduleCycleById(id);
 }
@@ -506,7 +538,7 @@ export async function expireStaleScheduleCycles() {
   await pool.query(
     `UPDATE career_publish_schedule_cycles
      SET decision = 'expired', decided_at = NOW()
-     WHERE decision = 'pending' AND expires_at < NOW()`,
+     WHERE decision IN ('pending', 'awaiting_intake') AND expires_at < NOW()`,
   );
 }
 
