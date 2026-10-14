@@ -271,7 +271,7 @@ export async function sendTestScheduleGateEmail() {
     err.status = 503;
     throw err;
   }
-  const { recipients } = await resolveHrRecipients(null);
+  const { recipients, settings } = await resolveHrRecipients(null);
   if (!recipients.length) {
     const err = new Error("Add at least one HR email");
     err.status = 400;
