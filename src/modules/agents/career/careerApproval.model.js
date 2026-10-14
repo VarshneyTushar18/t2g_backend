@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
   schedule_gate_expiry_hours: 72,
   schedule_agent_prompt: "",
   schedule_run_days: [],
+  schedule_mode: "publish_email",
   schedule_last_sent_at: null,
 };
 
@@ -51,6 +52,8 @@ function mapSettings(row) {
     ),
     schedule_agent_prompt: row.schedule_agent_prompt || "",
     schedule_run_days: parseJsonArray(row.schedule_run_days, []),
+    schedule_mode:
+      row.schedule_mode === "ask_before_draft" ? "ask_before_draft" : "publish_email",
     schedule_last_sent_at: row.schedule_last_sent_at || null,
     updated_by: row.updated_by || null,
     updated_at: row.updated_at || null,
@@ -129,6 +132,7 @@ export async function ensureCareerApprovalTables() {
     "schedule_gate_expiry_hours INT NOT NULL DEFAULT 72",
     "schedule_agent_prompt TEXT NULL",
     "schedule_run_days JSON NULL",
+    "schedule_mode ENUM('publish_email','ask_before_draft') NOT NULL DEFAULT 'publish_email'",
     "schedule_last_sent_at DATETIME NULL",
   ];
   for (const col of scheduleColumns) {
@@ -221,6 +225,11 @@ export async function saveSettings(payload, updatedBy = null) {
     schedule_run_days: Array.isArray(payload.schedule_run_days)
       ? payload.schedule_run_days
       : current.schedule_run_days,
+    schedule_mode:
+      payload.schedule_mode === "ask_before_draft" ||
+      payload.schedule_mode === "publish_email"
+        ? payload.schedule_mode
+        : current.schedule_mode || "publish_email",
   };
 
   await pool.query(
@@ -239,6 +248,7 @@ export async function saveSettings(payload, updatedBy = null) {
       schedule_gate_expiry_hours = ?,
       schedule_agent_prompt = ?,
       schedule_run_days = ?,
+      schedule_mode = ?,
       updated_by = ?
      WHERE id = 1`,
     [
@@ -256,6 +266,7 @@ export async function saveSettings(payload, updatedBy = null) {
       next.schedule_gate_expiry_hours,
       next.schedule_agent_prompt || null,
       JSON.stringify(next.schedule_run_days || []),
+      next.schedule_mode || "publish_email",
       updatedBy,
     ],
   );

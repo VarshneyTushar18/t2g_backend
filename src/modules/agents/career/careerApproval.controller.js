@@ -100,6 +100,10 @@ export async function saveSettings(req, res) {
         schedule_time_local: body.schedule_time_local,
         schedule_gate_expiry_hours: body.schedule_gate_expiry_hours,
         schedule_agent_prompt: body.schedule_agent_prompt,
+        schedule_mode: body.schedule_mode,
+        schedule_run_days: Array.isArray(body.schedule_run_days)
+          ? body.schedule_run_days
+          : undefined,
       },
       req.user?.email || req.user?.sub || null,
     );

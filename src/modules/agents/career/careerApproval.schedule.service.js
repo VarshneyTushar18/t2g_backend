@@ -162,6 +162,42 @@ async function buildDraftPromptFromQueue(settings) {
   };
 }
 
+async function runScheduleAutoDraft({ force = false, settings: settingsIn = null } = {}) {
+  const settings = settingsIn || (await approvalModel.getSettings());
+  if (!force && !shouldRunCareerSchedule(settings)) {
+    return { ran: false, reason: "not_due" };
+  }
+
+  let topicId = null;
+  try {
+    const built = await buildDraftPromptFromQueue(settings);
+    const prompt = typeof built === "string" ? built : built.prompt;
+    topicId = typeof built === "string" ? null : built.topicId;
+    await runScheduledJobDraft({
+      prompt,
+      requesterEmail: "career-scheduler@tech2globe.com",
+    });
+    if (topicId) {
+      await topicModel.markTopicDraftReady(topicId, null);
+    }
+    await approvalModel.touchScheduleLastSent();
+    console.log("[career-schedule] auto-draft completed; HR publish email sent by agent tools");
+    return {
+      ran: true,
+      sent: true,
+      mode: "publish_email",
+      message:
+        "Career Agent drafted a job and emailed HR the full publish approval (Yes/No + JD + live jobs).",
+    };
+  } catch (err) {
+    console.error("[career-schedule] auto-draft failed:", err.message);
+    if (topicId) {
+      await topicModel.markTopicFailed(topicId, err.message);
+    }
+    return { ran: true, sent: false, mode: "publish_email", error: err.message };
+  }
+}
+
 export async function runScheduleGateTick({ force = false } = {}) {
   await approvalModel.expireStaleScheduleCycles();
   const settings = await approvalModel.getSettings();
@@ -173,6 +209,11 @@ export async function runScheduleGateTick({ force = false } = {}) {
   }
   if (!force && !shouldRunCareerSchedule(settings)) {
     return { ran: false, reason: "not_due" };
+  }
+
+  const mode = settings.schedule_mode || "publish_email";
+  if (mode === "publish_email") {
+    return runScheduleAutoDraft({ force: true, settings });
   }
 
   const pending = await approvalModel.getPendingScheduleCycle();
@@ -226,20 +267,38 @@ export async function runScheduleGateTick({ force = false } = {}) {
   return { ran: true, sent: true, cycleId: cycle.id, recipients };
 }
 
-/** Admin: send gate email immediately (ignores calendar due). */
+/** Admin: test cron — full publish email or gate email depending on schedule_mode. */
 export async function sendTestScheduleGateEmail() {
   if (!getPublicApiBase()) {
     const err = new Error("Set BACKEND_PUBLIC_URL for email links");
     err.status = 503;
     throw err;
   }
+  const settings = await approvalModel.getSettings();
+  const mode = settings.schedule_mode || "publish_email";
+
+  if (mode === "publish_email") {
+    const result = await runScheduleAutoDraft({ force: true, settings });
+    if (!result.sent) {
+      const err = new Error(result.error || "Auto-draft failed");
+      err.status = 500;
+      throw err;
+    }
+    const { recipients } = await resolveHrRecipients(null);
+    return {
+      sent: true,
+      mode: "publish_email",
+      recipients,
+      note: "HR should receive the full “Should we publish …?” email with job details (not the short check-in).",
+    };
+  }
+
   const { recipients } = await resolveHrRecipients(null);
   if (!recipients.length) {
     const err = new Error("Add at least one HR email");
     err.status = 400;
     throw err;
   }
-  const settings = await approvalModel.getSettings();
   const cycle = await approvalModel.createScheduleCycle({
     hrEmails: recipients,
     expiryHours: settings.schedule_gate_expiry_hours,
