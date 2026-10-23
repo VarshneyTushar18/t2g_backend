@@ -138,7 +138,10 @@ export async function updateSettings(req, res) {
       });
     }
 
-    const settings = await model.upsertSettings({
+    const topic_source =
+      body.topic_source === "auto_trending" ? "auto_trending" : "manual";
+
+    const settingsPatch = {
       enabled: Boolean(body.enabled),
       timezone: String(body.timezone || "Asia/Kolkata"),
       window_start: body.window_start || null,
@@ -148,7 +151,26 @@ export async function updateSettings(req, res) {
       posts_per_run: Number(body.posts_per_run || 1),
       mode,
       approval_emails,
-    });
+      topic_source,
+    };
+    if (body.auto_niche !== undefined) {
+      settingsPatch.auto_niche = String(body.auto_niche || "").trim();
+    }
+    if (body.auto_default_author_name !== undefined) {
+      settingsPatch.auto_default_author_name = String(body.auto_default_author_name || "").trim();
+    }
+    if (body.auto_default_category_ids !== undefined) {
+      settingsPatch.auto_default_category_ids = Array.isArray(body.auto_default_category_ids)
+        ? body.auto_default_category_ids.map(Number).filter(Boolean)
+        : [];
+    }
+    if (body.auto_default_tags !== undefined) {
+      settingsPatch.auto_default_tags = Array.isArray(body.auto_default_tags)
+        ? body.auto_default_tags.map(String).filter(Boolean)
+        : [];
+    }
+
+    const settings = await model.upsertSettings(settingsPatch);
     res.json({
       settings,
       publicApiConfigured: Boolean(getPublicApiBase()),

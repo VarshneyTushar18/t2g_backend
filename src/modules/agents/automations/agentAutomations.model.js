@@ -11,6 +11,12 @@ const DEFAULT_SETTINGS = {
   mode: "pending_email",
   approval_emails: [],
   last_run_at: null,
+  topic_source: "manual",
+  auto_niche:
+    "digital marketing, SEO, Amazon marketplace, PPC, e-commerce for US businesses",
+  auto_default_author_name: "Tech2Globe Digital Team",
+  auto_default_category_ids: [],
+  auto_default_tags: [],
 };
 
 function parseJsonArray(value, fallback = []) {
@@ -38,6 +44,18 @@ function mapSettings(row) {
     approval_emails: parseJsonArray(row.approval_emails, []),
     last_run_at: row.last_run_at || null,
     updated_at: row.updated_at || null,
+    topic_source: row.topic_source || DEFAULT_SETTINGS.topic_source,
+    auto_niche: row.auto_niche || DEFAULT_SETTINGS.auto_niche,
+    auto_default_author_name:
+      row.auto_default_author_name || DEFAULT_SETTINGS.auto_default_author_name,
+    auto_default_category_ids: parseJsonArray(
+      row.auto_default_category_ids,
+      DEFAULT_SETTINGS.auto_default_category_ids,
+    ),
+    auto_default_tags: parseJsonArray(
+      row.auto_default_tags,
+      DEFAULT_SETTINGS.auto_default_tags,
+    ),
   };
 }
 
@@ -80,8 +98,9 @@ export async function upsertSettings(payload) {
 
   await blogDb.query(
     `INSERT INTO agent_automations_settings
-      (id, enabled, timezone, window_start, window_end, run_time, run_days, posts_per_run, mode, approval_emails, last_run_at)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, enabled, timezone, window_start, window_end, run_time, run_days, posts_per_run, mode, approval_emails, last_run_at,
+       topic_source, auto_niche, auto_default_author_name, auto_default_category_ids, auto_default_tags)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
       enabled = VALUES(enabled),
       timezone = VALUES(timezone),
@@ -93,6 +112,11 @@ export async function upsertSettings(payload) {
       mode = VALUES(mode),
       approval_emails = VALUES(approval_emails),
       last_run_at = VALUES(last_run_at),
+      topic_source = VALUES(topic_source),
+      auto_niche = VALUES(auto_niche),
+      auto_default_author_name = VALUES(auto_default_author_name),
+      auto_default_category_ids = VALUES(auto_default_category_ids),
+      auto_default_tags = VALUES(auto_default_tags),
       updated_at = CURRENT_TIMESTAMP`,
     [
       next.enabled ? 1 : 0,
@@ -105,6 +129,11 @@ export async function upsertSettings(payload) {
       next.mode || "pending_email",
       JSON.stringify(next.approval_emails || []),
       next.last_run_at || null,
+      next.topic_source === "auto_trending" ? "auto_trending" : "manual",
+      next.auto_niche || DEFAULT_SETTINGS.auto_niche,
+      next.auto_default_author_name || DEFAULT_SETTINGS.auto_default_author_name,
+      JSON.stringify(next.auto_default_category_ids || []),
+      JSON.stringify(next.auto_default_tags || []),
     ],
   );
 
@@ -208,6 +237,24 @@ export async function getDueTopics(limit) {
     [Number(limit)],
   );
   return rows.map(mapTopic);
+}
+
+export async function countQueuedTopics() {
+  const [rows] = await blogDb.query(
+    `SELECT COUNT(*) AS c FROM agent_automations_topics
+     WHERE is_active = 1 AND status = 'queued'
+       AND (scheduled_for IS NULL OR scheduled_for <= NOW())`,
+  );
+  return Number(rows[0]?.c || 0);
+}
+
+export async function listRecentTopicTitles(limit = 40) {
+  const [rows] = await blogDb.query(
+    `SELECT topic FROM agent_automations_topics
+     ORDER BY id DESC LIMIT ?`,
+    [Number(limit)],
+  );
+  return rows.map((r) => r.topic).filter(Boolean);
 }
 
 export async function markTopicProcessing(id) {
