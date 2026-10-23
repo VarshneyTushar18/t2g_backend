@@ -251,6 +251,19 @@ export async function updateTopic(req, res) {
   }
 }
 
+export async function requeueTopic(req, res) {
+  try {
+    const id = Number(req.params.id);
+    const topic = await model.requeueTopic(id);
+    if (!topic) {
+      return res.status(404).json({ error: "Topic not found" });
+    }
+    res.json({ topic });
+  } catch (err) {
+    handleError(res, err, "Failed to requeue topic");
+  }
+}
+
 export async function deleteTopic(req, res) {
   try {
     const id = Number(req.params.id);

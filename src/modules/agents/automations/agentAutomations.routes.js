@@ -56,6 +56,7 @@ router.put("/settings", ...requireBlogEdit, controller.updateSettings);
 router.get("/topics", ...requireBlogView, controller.listTopics);
 router.post("/topics", ...requireBlogEdit, controller.createTopic);
 router.put("/topics/:id", ...requireBlogEdit, controller.updateTopic);
+router.post("/topics/:id/requeue", ...requireBlogEdit, controller.requeueTopic);
 router.delete("/topics/:id", ...requireBlogEdit, controller.deleteTopic);
 
 router.get("/agent-memory", ...requireBlogView, controller.getAgentMemory);

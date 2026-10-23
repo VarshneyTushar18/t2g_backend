@@ -14,12 +14,32 @@ import {
   buildContentFormatRules,
 } from "./blogWritingStyle.js";
 
+const BLOG_AGENT_MAX_TURNS = Math.min(
+  Math.max(Number(process.env.BLOG_AGENT_MAX_TURNS || 25), 10),
+  40,
+);
+const BLOG_AUTOMATION_MAX_TURNS = Math.min(
+  Math.max(Number(process.env.BLOG_AUTOMATION_MAX_TURNS || 30), 15),
+  50,
+);
+
+const AUTOMATION_RUN_INSTRUCTIONS = `
+## SCHEDULED AUTOMATION RUN (overrides Stage A — mandatory)
+This is a one-shot scheduled job, not a chat with a human.
+- Do NOT ask questions. Do NOT show a plan and wait for "yes".
+- Do NOT call list_blog_posts unless create_blog_post failed and you need an id.
+- Do NOT call generate_blog_image (too slow). Use pick_blog_image once for cover, or pass a stock URL from pick_blog_image into create_blog_post.
+- Target ≤4 tool rounds: optional pick_blog_image → create_blog_post → short text reply with id and url.
+- Write the full article in create_blog_post on the first create call.
+- End with: id: {number} and url: https://www.tech2globe.com/blogs/{slug}`;
+
 function buildSystemContext({
   guidelines,
   feedback,
   canPublish,
   userEmail,
   humanizePercent = 70,
+  automationRun = false,
 }) {
   const parts = [];
   const human = clampHumanizePercent(
@@ -138,6 +158,10 @@ If skipping questions, still honor author/status/images from the message.
 - Delete → list_blog_posts if needed, then delete_blog_post only on explicit request
 Public URL format: https://www.tech2globe.com/blogs/{slug}`);
 
+  if (automationRun) {
+    parts.push(AUTOMATION_RUN_INSTRUCTIONS);
+  }
+
   return parts.join("\n");
 }
 
@@ -242,8 +266,10 @@ export async function runBlogAgent({ user, threadId, message }) {
     model.getThread(threadId, userId).catch(() => null),
   ]);
 
+  const isAutomation = thread?.agent_type === "automation";
+
   let guidelines = guidelinesBase;
-  if (thread?.agent_type === "automation") {
+  if (isAutomation) {
     const automationGuide = await model.getGuidelines(4);
     if (automationGuide?.content?.trim()) {
       guidelines = {
@@ -262,6 +288,7 @@ export async function runBlogAgent({ user, threadId, message }) {
     canPublish: effectiveCanPublish,
     userEmail,
     humanizePercent,
+    automationRun: isAutomation,
   });
 
   const tools = createBlogAgentTools({
@@ -284,7 +311,8 @@ export async function runBlogAgent({ user, threadId, message }) {
   const runInput = buildRunInput(history, message);
   const started = Date.now();
 
-  const result = await run(agent, runInput);
+  const maxTurns = isAutomation ? BLOG_AUTOMATION_MAX_TURNS : BLOG_AGENT_MAX_TURNS;
+  const result = await run(agent, runInput, { maxTurns });
   const output = result.finalOutput || "Done.";
   const posts = extractToolPosts(result);
 

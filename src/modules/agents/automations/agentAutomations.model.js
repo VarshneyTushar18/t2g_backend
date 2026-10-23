@@ -295,3 +295,19 @@ export async function markTopicFailed(id, errorMessage) {
     [String(errorMessage || "Unknown failure").slice(0, 2000), Number(id)],
   );
 }
+
+export async function requeueTopic(id) {
+  const existing = await getTopicById(id);
+  if (!existing) return null;
+  await blogDb.query(
+    `UPDATE agent_automations_topics
+     SET status = 'queued',
+         error_message = NULL,
+         generated_post_id = NULL,
+         generated_slug = NULL,
+         generated_title = NULL
+     WHERE id = ?`,
+    [Number(id)],
+  );
+  return getTopicById(id);
+}
