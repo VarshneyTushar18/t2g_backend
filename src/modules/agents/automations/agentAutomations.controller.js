@@ -311,9 +311,11 @@ export async function updateAgentMemory(req, res) {
   }
 }
 
-export async function runNow(_req, res) {
+export async function runNow(req, res) {
   try {
-    const result = await runAutomationNow();
+    const result = await runAutomationNow({
+      bootstrapTrending: Boolean(req.body?.bootstrap_trending),
+    });
     res.json({ result });
   } catch (err) {
     handleError(res, err, "Failed to run automations");
