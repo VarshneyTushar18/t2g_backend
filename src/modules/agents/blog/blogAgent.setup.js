@@ -2,6 +2,10 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import blogDb from "../../../config/blogDb.js";
+import {
+  BLOG_AUTOMATION_GUIDELINES_ID,
+  DEFAULT_BLOG_AUTOMATION_MEMORY,
+} from "./blogAgentAutomationMemory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sqlPath = path.join(__dirname, "../../../../sql/blog_agent.sql");
@@ -92,6 +96,17 @@ export async function ensureBlogAgentTables() {
         [
           "Tech2Globe Career Agent:\n- Create clear, professional job posts for Tech2Globe hiring\n- Default location: Noida unless user specifies otherwise\n- Default salary phrasing: Best in the Industry (unless user gives a range)\n- Skills and responsibilities must be concrete and role-specific\n- Prefer closing (inactive) over hard delete when applications may exist\n- Confirm title, experience, positions, and location before create when details are vague\n- After create/update, always report job id, title, and status",
         ],
+      );
+    }
+
+    const [guide4] = await blogDb.query(
+      "SELECT id FROM blog_agent_guidelines WHERE id = ?",
+      [BLOG_AUTOMATION_GUIDELINES_ID],
+    );
+    if (!guide4.length) {
+      await blogDb.query(
+        `INSERT INTO blog_agent_guidelines (id, content, humanize_percent) VALUES (?, ?, 70)`,
+        [BLOG_AUTOMATION_GUIDELINES_ID, DEFAULT_BLOG_AUTOMATION_MEMORY],
       );
     }
 

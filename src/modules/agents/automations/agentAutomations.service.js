@@ -7,6 +7,7 @@ import {
   requestBlogPublishApproval,
   sendTestApprovalEmail,
 } from "./blogApproval.service.js";
+import { DEFAULT_BLOG_AUTOMATION_MEMORY } from "../blog/blogAgentAutomationMemory.js";
 
 function parseEmails(value) {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -64,18 +65,23 @@ function shouldRunNow(settings) {
 
 function buildPrompt(topic, status) {
   const tags = (topic.tags || []).join(", ");
-  const categories = (topic.category_ids || []).join(", ");
+  const categoryIds = (topic.category_ids || []).map(Number).filter(Boolean);
   const author = topic.author_name || "Tech2Globe Digital Team";
   return [
     `Create a complete SEO blog post on topic: "${topic.topic}"`,
     `Set status to ${status}.`,
     `Author name: ${author}.`,
     tags ? `Use tags: ${tags}.` : "",
-    categories ? `Use category IDs: ${categories}.` : "",
+    categoryIds.length
+      ? `Mandatory categoryIds in create_blog_post: [${categoryIds.join(", ")}].`
+      : "If no categories were set on the topic, pick the best matching blog category id from Tech2Globe site context.",
     topic.notes ? `Extra instructions: ${topic.notes}` : "",
     "IMPORTANT: Skip clarifying questions. Just write it now — do not ask the user anything.",
+    "Slug: derive from final title (lowercase, hyphens). Pass slug, metaTitle, metaDescription, focusKeyword in create_blog_post.",
+    "Featured image: use pick_blog_image if needed; set meaningful image alt tied to the title.",
     "Mandatory: call create_blog_post tool and then clearly mention created id and public url in final response (include a line: id: {number}).",
     "Follow the admin content mix setting from system instructions (humanize % vs AI %). Clear H2s, short paragraphs, no raw markdown asterisks.",
+    DEFAULT_BLOG_AUTOMATION_MEMORY,
   ]
     .filter(Boolean)
     .join("\n");

@@ -232,7 +232,7 @@ export function createBlogAgentTools({
           resolvedStatus = "draft";
         }
 
-        const slug = params.slug || slugify(params.title);
+        const slug = slugify(params.slug || params.title);
         let html = markdownToHtml(params.content);
         html = await humanizeBlogHtml(html, {
           humanizePercent,
@@ -242,31 +242,44 @@ export function createBlogAgentTools({
         const topicHint = [params.title, params.focusKeyword, ...(params.tags || [])]
           .filter(Boolean)
           .join(" ");
-        const cover =
-          params.featured_image || pickStockImage(topicHint).url;
+        const stockPick = pickStockImage(topicHint);
+        const cover = params.featured_image || stockPick.url;
+        const featuredAlt = String(
+          params.focusKeyword || params.title || stockPick.alt || "Tech2Globe blog",
+        )
+          .trim()
+          .slice(0, 125);
+        const featuredTitle = String(params.title || params.metaTitle || "")
+          .trim()
+          .slice(0, 255);
         if (params.inline_image_urls && params.inline_image_urls.length) {
           html = injectInlineImagesFromUrls(html, params.inline_image_urls);
         } else if (params.add_inline_images !== false) {
           html = injectInlineImages(html, topicHint);
         }
 
+        const metaTitle = (params.metaTitle || params.title).slice(0, 60);
+        const metaDescription = (
+          params.metaDescription ||
+          params.excerpt ||
+          params.title
+        ).slice(0, 160);
+
         const post = await blogModel.createPost({
           title: params.title,
           slug,
-          excerpt: params.excerpt || params.title,
+          excerpt: params.excerpt || metaDescription.slice(0, 300) || params.title,
           content: html,
           featured_image: cover,
+          featured_image_title: featuredTitle || null,
+          featured_image_alt: featuredAlt || null,
           status: resolvedStatus,
           author_name: author,
           categories: params.categoryIds || [],
           tags: params.tags || [],
           seo: {
-            meta_title: (params.metaTitle || params.title).slice(0, 60),
-            meta_description: (
-              params.metaDescription ||
-              params.excerpt ||
-              params.title
-            ).slice(0, 160),
+            meta_title: metaTitle,
+            meta_description: metaDescription,
             focus_keyword:
               params.focusKeyword ||
               (params.tags && params.tags[0]) ||
@@ -372,17 +385,33 @@ export function createBlogAgentTools({
             existing.title.split(" ")[0],
         };
 
+        const nextTitle = params.title || existing.title;
+        const nextSlug = params.slug
+          ? slugify(params.slug)
+          : params.title
+            ? slugify(params.title)
+            : existing.slug;
+
         const updated = await blogModel.updatePost(existing.id, {
-          title: params.title || existing.title,
-          slug: params.slug || existing.slug,
+          title: nextTitle,
+          slug: nextSlug,
           excerpt: params.excerpt || existing.excerpt,
           content,
           featured_image: params.featured_image || existing.featured_image,
+          featured_image_title:
+            existing.featured_image_title || nextTitle.slice(0, 255),
+          featured_image_alt:
+            existing.featured_image_alt ||
+            seo.focus_keyword ||
+            nextTitle.slice(0, 125),
           status: resolvedStatus,
           author_name: params.author_name || existing.author,
           categories: existing.categories || [],
           tags: params.tags || existing.tags || [],
-          seo,
+          seo: {
+            ...seo,
+            canonical_url: `https://www.tech2globe.com/blogs/${nextSlug}`,
+          },
         });
 
         return {

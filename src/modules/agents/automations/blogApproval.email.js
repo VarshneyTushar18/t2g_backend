@@ -391,9 +391,12 @@ export function renderPreviewPage({
     .content h2 { font-size:1.4em; }
     .content p { margin:0 0 1em; }
     .content ul,.content ol { margin:0 0 1em; padding-left:1.3em; }
-    .content img { max-width:100%; height:auto; border-radius:8px; }
+    .content img { max-width:100%; height:auto; border-radius:8px; display:block; margin:1.25em auto; }
+    .content figure { margin:1.5em 0; }
+    .content figcaption { font-family:Segoe UI,Arial,sans-serif; font-size:13px; color:#64748b; margin-top:8px; text-align:center; }
     .content a { color:#2563eb; }
     .content blockquote { margin:1.2em 0; padding:10px 16px; border-left:3px solid #cbd5e1; color:#475569; background:#f8fafc; }
+    .content pre { overflow-x:auto; padding:12px; background:#f1f5f9; border-radius:8px; font-size:14px; }
   </style>
 </head>
 <body>
@@ -417,7 +420,7 @@ export function renderPreviewPage({
     <article class="article">
       ${
         post.featured_image
-          ? `<img class="cover" src="${escapeHtml(post.featured_image)}" alt="" />`
+          ? `<img class="cover" src="${escapeHtml(post.featured_image)}" alt="${escapeHtml(post.featured_image_alt || post.title || "Blog cover")}" />`
           : ""
       }
       <h1>${escapeHtml(post.title || "")}</h1>

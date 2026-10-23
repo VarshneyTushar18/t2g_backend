@@ -224,7 +224,6 @@ export async function runBlogAgent({ user, threadId, message }) {
 
   await initOpenAI();
 
-  const userId = user.sub || user.id || "unknown";
   const userEmail = user.email || user.apiKeyName || null;
   const permissions = user.permissions?.blog || {};
   const canPublish = Boolean(permissions.add);
@@ -235,11 +234,24 @@ export async function runBlogAgent({ user, threadId, message }) {
   const effectiveCanPublish = isSuper || canPublish;
   const effectiveCanDelete = isSuper || canDelete;
 
-  const [guidelines, feedback, history] = await Promise.all([
+  const userId = user.sub || user.id || "unknown";
+  const [guidelinesBase, feedback, history, thread] = await Promise.all([
     model.getGuidelines(),
     model.listRecentFeedback({ limit: 15 }),
     model.listMessages(threadId),
+    model.getThread(threadId, userId).catch(() => null),
   ]);
+
+  let guidelines = guidelinesBase;
+  if (thread?.agent_type === "automation") {
+    const automationGuide = await model.getGuidelines(4);
+    if (automationGuide?.content?.trim()) {
+      guidelines = {
+        ...guidelinesBase,
+        content: `${guidelinesBase.content || ""}\n\n## Scheduled blog automations (always follow)\n${automationGuide.content}`.trim(),
+      };
+    }
+  }
 
   // Fixed content mix: exactly 70% human / 30% AI (never odd values like 31%)
   const humanizePercent = 70;

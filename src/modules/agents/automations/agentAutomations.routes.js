@@ -58,6 +58,9 @@ router.post("/topics", ...requireBlogEdit, controller.createTopic);
 router.put("/topics/:id", ...requireBlogEdit, controller.updateTopic);
 router.delete("/topics/:id", ...requireBlogEdit, controller.deleteTopic);
 
+router.get("/agent-memory", ...requireBlogView, controller.getAgentMemory);
+router.put("/agent-memory", ...requireBlogEdit, controller.updateAgentMemory);
+
 router.post("/run-now", ...requireBlogEdit, controller.runNow);
 router.post("/test-email", ...requireBlogEdit, controller.testSampleEmail);
 

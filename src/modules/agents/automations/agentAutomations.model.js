@@ -157,7 +157,10 @@ export async function createTopic(payload) {
 export async function updateTopic(id, payload) {
   const existing = await getTopicById(id);
   if (!existing) return null;
-  const next = { ...existing, ...payload };
+  const next = { ...existing };
+  for (const [key, value] of Object.entries(payload || {})) {
+    if (value !== undefined) next[key] = value;
+  }
   await blogDb.query(
     `UPDATE agent_automations_topics
      SET topic = ?, notes = ?, author_name = ?, category_ids = ?, tags = ?, priority = ?, scheduled_for = ?, is_active = ?, status = ?

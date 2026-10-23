@@ -1,4 +1,6 @@
 import * as model from "./agentAutomations.model.js";
+import * as blogAgentModel from "../blog/blogAgent.model.js";
+import { BLOG_AUTOMATION_GUIDELINES_ID } from "../blog/blogAgentAutomationMemory.js";
 import {
   runAutomationNow,
   sendTestSampleEmail,
@@ -236,6 +238,34 @@ export async function deleteTopic(req, res) {
     res.json({ ok: true });
   } catch (err) {
     handleError(res, err, "Failed to delete topic");
+  }
+}
+
+export async function getAgentMemory(_req, res) {
+  try {
+    const guidelines = await blogAgentModel.getGuidelines(
+      BLOG_AUTOMATION_GUIDELINES_ID,
+    );
+    res.json({ guidelines });
+  } catch (err) {
+    handleError(res, err, "Failed to load automation agent memory");
+  }
+}
+
+export async function updateAgentMemory(req, res) {
+  try {
+    const content = String(req.body?.content ?? "").trim();
+    if (!content) {
+      return res.status(400).json({ error: "content is required" });
+    }
+    const guidelines = await blogAgentModel.updateGuidelines(
+      content,
+      currentUserId(req),
+      BLOG_AUTOMATION_GUIDELINES_ID,
+    );
+    res.json({ guidelines });
+  } catch (err) {
+    handleError(res, err, "Failed to save automation agent memory");
   }
 }
 
