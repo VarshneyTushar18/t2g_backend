@@ -171,7 +171,9 @@ export function createBlogAgentTools({
   canPublish,
   canDelete,
   humanizePercent = 70,
+  automationMode = false,
 }) {
+  const effectiveHumanize = automationMode ? 35 : humanizePercent;
   const createBlogPost = tool({
     name: "create_blog_post",
     description:
@@ -234,10 +236,12 @@ export function createBlogAgentTools({
 
         const slug = slugify(params.slug || params.title);
         let html = markdownToHtml(params.content);
-        html = await humanizeBlogHtml(html, {
-          humanizePercent,
-          title: params.title,
-        });
+        if (!automationMode && effectiveHumanize >= 40) {
+          html = await humanizeBlogHtml(html, {
+            humanizePercent: effectiveHumanize,
+            title: params.title,
+          });
+        }
         const author = (params.author_name || "Tech2Globe Digital Team").trim();
         const topicHint = [params.title, params.focusKeyword, ...(params.tags || [])]
           .filter(Boolean)
@@ -579,6 +583,10 @@ export function createBlogAgentTools({
       }
     },
   });
+
+  if (automationMode) {
+    return [createBlogPost, updateBlogPost];
+  }
 
   return [
     pickBlogImage,

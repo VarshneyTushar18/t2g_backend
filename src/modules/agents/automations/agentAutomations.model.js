@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
   auto_default_author_name: "Tech2Globe Digital Team",
   auto_default_category_ids: [],
   auto_default_tags: [],
+  posts_stagger_seconds: 120,
 };
 
 function parseJsonArray(value, fallback = []) {
@@ -55,6 +56,10 @@ function mapSettings(row) {
     auto_default_tags: parseJsonArray(
       row.auto_default_tags,
       DEFAULT_SETTINGS.auto_default_tags,
+    ),
+    posts_stagger_seconds: Math.min(
+      Math.max(Number(row.posts_stagger_seconds ?? 120), 0),
+      900,
     ),
   };
 }
@@ -99,8 +104,8 @@ export async function upsertSettings(payload) {
   await blogDb.query(
     `INSERT INTO agent_automations_settings
       (id, enabled, timezone, window_start, window_end, run_time, run_days, posts_per_run, mode, approval_emails, last_run_at,
-       topic_source, auto_niche, auto_default_author_name, auto_default_category_ids, auto_default_tags)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       topic_source, auto_niche, auto_default_author_name, auto_default_category_ids, auto_default_tags, posts_stagger_seconds)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
       enabled = VALUES(enabled),
       timezone = VALUES(timezone),
@@ -117,6 +122,7 @@ export async function upsertSettings(payload) {
       auto_default_author_name = VALUES(auto_default_author_name),
       auto_default_category_ids = VALUES(auto_default_category_ids),
       auto_default_tags = VALUES(auto_default_tags),
+      posts_stagger_seconds = VALUES(posts_stagger_seconds),
       updated_at = CURRENT_TIMESTAMP`,
     [
       next.enabled ? 1 : 0,
@@ -134,6 +140,7 @@ export async function upsertSettings(payload) {
       next.auto_default_author_name || DEFAULT_SETTINGS.auto_default_author_name,
       JSON.stringify(next.auto_default_category_ids || []),
       JSON.stringify(next.auto_default_tags || []),
+      Math.min(Math.max(Number(next.posts_stagger_seconds ?? 120), 0), 900),
     ],
   );
 
@@ -294,6 +301,21 @@ export async function markTopicFailed(id, errorMessage) {
      WHERE id = ?`,
     [String(errorMessage || "Unknown failure").slice(0, 2000), Number(id)],
   );
+}
+
+export async function releaseStaleProcessingTopics(staleMinutes = 50) {
+  const mins = Math.min(Math.max(Number(staleMinutes) || 50, 10), 240);
+  const [result] = await blogDb.query(
+    `UPDATE agent_automations_topics
+     SET status = 'failed',
+         error_message = CONCAT('Timed out after ', ?, ' minutes in processing — use Retry'),
+         last_processed_at = CURRENT_TIMESTAMP
+     WHERE status = 'processing'
+       AND last_processed_at IS NOT NULL
+       AND last_processed_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+    [mins, mins],
+  );
+  return Number(result.affectedRows || 0);
 }
 
 export async function requeueTopic(id) {

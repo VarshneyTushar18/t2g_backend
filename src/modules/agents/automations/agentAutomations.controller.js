@@ -4,6 +4,7 @@ import { BLOG_AUTOMATION_GUIDELINES_ID } from "../blog/blogAgentAutomationMemory
 import {
   runAutomationNow,
   sendTestSampleEmail,
+  describeScheduleStatus,
 } from "./agentAutomations.service.js";
 import { handleSignedAction } from "./blogApproval.service.js";
 import {
@@ -109,8 +110,10 @@ export async function goApproval(req, res) {
 export async function getSettings(_req, res) {
   try {
     const settings = await model.getSettings();
+    const scheduleStatus = describeScheduleStatus(settings);
     res.json({
       settings,
+      scheduleStatus,
       publicApiConfigured: Boolean(getPublicApiBase()),
       publicApiBase: getPublicApiBase() || null,
     });
@@ -169,10 +172,14 @@ export async function updateSettings(req, res) {
         ? body.auto_default_tags.map(String).filter(Boolean)
         : [];
     }
+    if (body.posts_stagger_seconds !== undefined) {
+      settingsPatch.posts_stagger_seconds = Number(body.posts_stagger_seconds);
+    }
 
     const settings = await model.upsertSettings(settingsPatch);
     res.json({
       settings,
+      scheduleStatus: describeScheduleStatus(settings),
       publicApiConfigured: Boolean(getPublicApiBase()),
       publicApiBase: getPublicApiBase() || null,
     });

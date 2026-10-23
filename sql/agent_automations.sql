@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS agent_automations_settings (
   auto_default_author_name VARCHAR(255) NULL,
   auto_default_category_ids JSON NULL,
   auto_default_tags JSON NULL,
+  posts_stagger_seconds INT NOT NULL DEFAULT 120,
   last_run_at DATETIME NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );

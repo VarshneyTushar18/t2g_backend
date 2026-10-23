@@ -50,6 +50,10 @@ async function ensureAutoTrendingColumns() {
       col: "auto_default_tags",
       sql: `ALTER TABLE agent_automations_settings ADD COLUMN auto_default_tags JSON NULL AFTER auto_default_category_ids`,
     },
+    {
+      col: "posts_stagger_seconds",
+      sql: `ALTER TABLE agent_automations_settings ADD COLUMN posts_stagger_seconds INT NOT NULL DEFAULT 120 AFTER auto_default_tags`,
+    },
   ];
   if (!(await tableExists("agent_automations_settings"))) return;
   for (const { col, sql } of alters) {

@@ -28,8 +28,8 @@ const AUTOMATION_RUN_INSTRUCTIONS = `
 This is a one-shot scheduled job, not a chat with a human.
 - Do NOT ask questions. Do NOT show a plan and wait for "yes".
 - Do NOT call list_blog_posts unless create_blog_post failed and you need an id.
-- Do NOT call generate_blog_image (too slow). Use pick_blog_image once for cover, or pass a stock URL from pick_blog_image into create_blog_post.
-- Target ≤4 tool rounds: optional pick_blog_image → create_blog_post → short text reply with id and url.
+- Do NOT call generate_blog_image or pick_blog_image. create_blog_post auto-assigns stock cover when featured_image is omitted.
+- Target 1–2 tool rounds: create_blog_post → short text reply with id and url.
 - Write the full article in create_blog_post on the first create call.
 - End with: id: {number} and url: https://www.tech2globe.com/blogs/{slug}`;
 
@@ -235,8 +235,8 @@ function buildRunInput(history, userMessage) {
   return lines.join("\n\n");
 }
 
-/** @param {{ user: object, threadId: string, message: string }} opts */
-export async function runBlogAgent({ user, threadId, message }) {
+/** @param {{ user: object, threadId: string, message: string, automationMode?: boolean }} opts */
+export async function runBlogAgent({ user, threadId, message, automationMode = false }) {
   await refreshConfiguredFlag();
   if (!isAgentConfigured()) {
     const err = new Error(
@@ -259,14 +259,19 @@ export async function runBlogAgent({ user, threadId, message }) {
   const effectiveCanDelete = isSuper || canDelete;
 
   const userId = user.sub || user.id || "unknown";
-  const [guidelinesBase, feedback, history, thread] = await Promise.all([
-    model.getGuidelines(),
-    model.listRecentFeedback({ limit: 15 }),
+  const [history, thread] = await Promise.all([
     model.listMessages(threadId),
     model.getThread(threadId, userId).catch(() => null),
   ]);
 
-  const isAutomation = thread?.agent_type === "automation";
+  const isAutomation = automationMode || thread?.agent_type === "automation";
+
+  const [guidelinesBase, feedback] = await Promise.all([
+    model.getGuidelines(),
+    isAutomation
+      ? Promise.resolve([])
+      : model.listRecentFeedback({ limit: 15 }),
+  ]);
 
   let guidelines = guidelinesBase;
   if (isAutomation) {
@@ -294,7 +299,8 @@ export async function runBlogAgent({ user, threadId, message }) {
   const tools = createBlogAgentTools({
     canPublish: effectiveCanPublish,
     canDelete: effectiveCanDelete,
-    humanizePercent,
+    humanizePercent: isAutomation ? 35 : humanizePercent,
+    automationMode: isAutomation,
   });
 
   const agent = new Agent({
@@ -303,8 +309,8 @@ export async function runBlogAgent({ user, threadId, message }) {
     model: getDefaultModel(),
     tools,
     modelSettings: {
-      maxTokens: 4500,
-      temperature: temperatureForHumanize(humanizePercent),
+      maxTokens: isAutomation ? 6000 : 4500,
+      temperature: isAutomation ? 0.65 : temperatureForHumanize(humanizePercent),
     },
   });
 
