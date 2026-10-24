@@ -10,7 +10,8 @@ const SESSION_DIR = path.join(process.cwd(), "storage", "blog-2.0");
 const SESSION_FILE = path.join(SESSION_DIR, "mailerlite-session.json");
 const PROFILE_DIR = path.join(SESSION_DIR, "browser-profile");
 const DEBUG_DIR = path.join(process.cwd(), "uploads", "blog20-bot-debug");
-const OTP_WAIT_MS = Number(process.env.BLOG_20_BOT_OTP_WAIT_MS) || 5 * 60 * 1000;
+const OTP_WAIT_MS =
+  Number(process.env.BLOG_20_BOT_OTP_WAIT_MS) || 15 * 60 * 1000;
 const BOT_TIMEOUT_MS =
   Number(process.env.BLOG_20_BOT_TIMEOUT_MS) || 12 * 60 * 1000;
 
@@ -2640,9 +2641,48 @@ export async function getMailerLiteBotStatus() {
     waiting_otp: Boolean(settings.mailerlite_bot_waiting_otp),
     session_status: settings.mailerlite_session_status || "ok",
     session_message: settings.mailerlite_session_message || "",
+    login_email_hint: settings.mailerlite_login_email_hint || null,
     runtime_version: BOT_RUNTIME_VERSION,
     job,
     phases: PUSH_PHASES.map((p) => p.label),
+  };
+}
+
+/** Admin cancel when bot is stuck on OTP or ghost "already running". */
+export async function forceResetMailerLiteBot() {
+  const job = getBotJobSnapshot();
+  const draftId = job?.draft_id;
+
+  if (draftId) {
+    await draftsModel.updateDraftPushStatus(draftId, {
+      mailerlite_push_status: "failed",
+      mailerlite_push_error:
+        "Push cancelled — enter MailerLite OTP from the bot login email and push again.",
+      mailerlite_push_step: "Cancelled",
+    });
+  }
+
+  await settingsModel.clearBotOtpState().catch(() => {});
+  await settingsModel
+    .setMailerLiteSessionAlert({
+      status: "needed",
+      message:
+        "Session reset. Push again and enter the OTP from the bot login email when prompted.",
+    })
+    .catch(() => {});
+
+  if (currentBotJob) {
+    finishBotJob({ ok: false, error: "Cancelled by admin" });
+  }
+  botBusy = false;
+  currentBotJob = null;
+
+  logStep("Bot state force-reset by admin");
+  return {
+    ok: true,
+    message:
+      "Stuck push cleared. Submit a fresh OTP on the next push (check the bot login inbox, not your personal MailerLite tab).",
+    draft_id: draftId || null,
   };
 }
 

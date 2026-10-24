@@ -6,6 +6,7 @@ import {
   pushDraftToMailerLite,
   getMailerLiteBotStatus,
   submitMailerLiteBotOtp,
+  forceResetMailerLiteBot,
 } from "./blog20.mailerliteBot.js";
 import { getPublicApiBase } from "../agents/automations/blogApproval.email.js";
 import {
@@ -188,6 +189,17 @@ export async function submitMailerLiteBotOtpHandler(req, res) {
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || "Failed to submit MailerLite OTP",
+    });
+  }
+}
+
+export async function cancelMailerLiteBotHandler(_req, res) {
+  try {
+    const result = await forceResetMailerLiteBot();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || "Failed to cancel MailerLite bot",
     });
   }
 }
