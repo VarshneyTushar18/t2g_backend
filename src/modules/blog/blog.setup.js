@@ -27,6 +27,8 @@ const SEO_COLUMN_MIGRATIONS = [
   { col: "twitter_description", sql: "ALTER TABLE blog_posts ADD COLUMN twitter_description TEXT DEFAULT NULL AFTER twitter_title" },
   { col: "twitter_image", sql: "ALTER TABLE blog_posts ADD COLUMN twitter_image VARCHAR(1000) DEFAULT NULL AFTER twitter_description" },
   { col: "tags", sql: "ALTER TABLE blog_posts ADD COLUMN tags JSON DEFAULT NULL AFTER twitter_image" },
+  { col: "featured_image_title", sql: "ALTER TABLE blog_posts ADD COLUMN featured_image_title VARCHAR(500) DEFAULT NULL AFTER featured_image" },
+  { col: "featured_image_alt", sql: "ALTER TABLE blog_posts ADD COLUMN featured_image_alt VARCHAR(500) DEFAULT NULL AFTER featured_image_title" },
 ];
 
 async function tableExists(name) {

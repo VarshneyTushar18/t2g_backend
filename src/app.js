@@ -12,6 +12,8 @@ import testimonialRoutes from "./modules/testimonials/testimonial.routes.js";
 import caseStudiesRoutes from "./modules/case-studies/caseStudies.routes.js";
 import blogRoutes from "./modules/blog/blog.routes.js";
 import connectRoutes from "./modules/connect/connect.routes.js";
+import blog20Routes from "./modules/blog-2.0/blog20.routes.js";
+import blog20AgentRoutes from "./modules/blog-2.0/blog20.agent.routes.js";
 import agentsRoutes from "./modules/agents/agents.routes.js";
 import elevenLabsRoutes from "./modules/elevenlabs/elevenlabs.routes.js";
 import elevenLabsFallbackRoutes from "./modules/elevenlabs/fallback/elevenlabs.fallback.routes.js";
@@ -161,6 +163,8 @@ app.use("/api/case-studies", caseStudiesRoutes);
 app.use("/api/blog", blogRoutes);
 app.use("/api/agents", agentsRoutes);
 app.use("/api/connect", connectRoutes);
+app.use("/api/blog-2.0", blog20Routes);
+app.use("/api/blog-2.0/agent", blog20AgentRoutes);
 
 /**
  * Static files

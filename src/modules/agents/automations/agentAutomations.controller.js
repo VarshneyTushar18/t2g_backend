@@ -1,8 +1,17 @@
 import * as model from "./agentAutomations.model.js";
+import * as blogAgentModel from "../blog/blogAgent.model.js";
+import { BLOG_AUTOMATION_GUIDELINES_ID } from "../blog/blogAgentAutomationMemory.js";
 import {
   runAutomationNow,
   sendTestSampleEmail,
+  describeScheduleStatus,
 } from "./agentAutomations.service.js";
+import { handleSignedAction } from "./blogApproval.service.js";
+import {
+  showRevisionForm,
+  submitRevision,
+} from "./blogApproval.revision.js";
+import { getPublicApiBase } from "./blogApproval.email.js";
 
 function handleError(res, err, fallback) {
   console.error(fallback, err);
@@ -27,10 +36,87 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
 
+/** Public: GET /api/agents/automations/approvals/revise?token=... */
+export async function showRevisionFormHandler(req, res) {
+  try {
+    const token = req.query.token || req.body?.token;
+    if (!token) {
+      return res
+        .status(400)
+        .type("html")
+        .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
+    }
+    const result = await showRevisionForm({ token });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog-approval] revise form failed:", err);
+    res
+      .status(500)
+      .type("html")
+      .send("<h1>Something went wrong</h1><p>Please try again or contact admin.</p>");
+  }
+}
+
+/** Public: POST /api/agents/automations/approvals/revise */
+export async function submitRevisionHandler(req, res) {
+  try {
+    const token = req.body?.token || req.query.token;
+    const feedback = req.body?.feedback;
+    if (!token) {
+      return res
+        .status(400)
+        .type("html")
+        .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
+    }
+    const result = await submitRevision({
+      token,
+      feedback,
+      actorEmail: req.body?.email || null,
+    });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog-approval] revise submit failed:", err);
+    res
+      .status(500)
+      .type("html")
+      .send("<h1>Something went wrong</h1><p>Please try again or contact admin.</p>");
+  }
+}
+
+/** Public: GET /api/agents/automations/approvals/go?token=... */
+export async function goApproval(req, res) {
+  try {
+    const token = req.query.token || req.body?.token;
+    if (!token) {
+      return res
+        .status(400)
+        .type("html")
+        .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
+    }
+    const result = await handleSignedAction({
+      token,
+      actorEmail: req.query.email || null,
+    });
+    res.status(result.status).type("html").send(result.html);
+  } catch (err) {
+    console.error("[blog-approval] go failed:", err);
+    res
+      .status(500)
+      .type("html")
+      .send("<h1>Something went wrong</h1><p>Please try again or contact admin.</p>");
+  }
+}
+
 export async function getSettings(_req, res) {
   try {
     const settings = await model.getSettings();
-    res.json({ settings });
+    const scheduleStatus = describeScheduleStatus(settings);
+    res.json({
+      settings,
+      scheduleStatus,
+      publicApiConfigured: Boolean(getPublicApiBase()),
+      publicApiBase: getPublicApiBase() || null,
+    });
   } catch (err) {
     handleError(res, err, "Failed to load settings");
   }
@@ -44,7 +130,7 @@ export async function updateSettings(req, res) {
 
     if (mode !== "draft_only" && !approval_emails.length) {
       return res.status(400).json({
-        error: "Add at least one sample blog email when using email modes",
+        error: "Add at least one approval email when using email modes",
       });
     }
 
@@ -55,7 +141,10 @@ export async function updateSettings(req, res) {
       });
     }
 
-    const settings = await model.upsertSettings({
+    const topic_source =
+      body.topic_source === "auto_trending" ? "auto_trending" : "manual";
+
+    const settingsPatch = {
       enabled: Boolean(body.enabled),
       timezone: String(body.timezone || "Asia/Kolkata"),
       window_start: body.window_start || null,
@@ -65,8 +154,35 @@ export async function updateSettings(req, res) {
       posts_per_run: Number(body.posts_per_run || 1),
       mode,
       approval_emails,
+      topic_source,
+    };
+    if (body.auto_niche !== undefined) {
+      settingsPatch.auto_niche = String(body.auto_niche || "").trim();
+    }
+    if (body.auto_default_author_name !== undefined) {
+      settingsPatch.auto_default_author_name = String(body.auto_default_author_name || "").trim();
+    }
+    if (body.auto_default_category_ids !== undefined) {
+      settingsPatch.auto_default_category_ids = Array.isArray(body.auto_default_category_ids)
+        ? body.auto_default_category_ids.map(Number).filter(Boolean)
+        : [];
+    }
+    if (body.auto_default_tags !== undefined) {
+      settingsPatch.auto_default_tags = Array.isArray(body.auto_default_tags)
+        ? body.auto_default_tags.map(String).filter(Boolean)
+        : [];
+    }
+    if (body.posts_stagger_seconds !== undefined) {
+      settingsPatch.posts_stagger_seconds = Number(body.posts_stagger_seconds);
+    }
+
+    const settings = await model.upsertSettings(settingsPatch);
+    res.json({
+      settings,
+      scheduleStatus: describeScheduleStatus(settings),
+      publicApiConfigured: Boolean(getPublicApiBase()),
+      publicApiBase: getPublicApiBase() || null,
     });
-    res.json({ settings });
   } catch (err) {
     handleError(res, err, "Failed to save settings");
   }
@@ -142,6 +258,19 @@ export async function updateTopic(req, res) {
   }
 }
 
+export async function requeueTopic(req, res) {
+  try {
+    const id = Number(req.params.id);
+    const topic = await model.requeueTopic(id);
+    if (!topic) {
+      return res.status(404).json({ error: "Topic not found" });
+    }
+    res.json({ topic });
+  } catch (err) {
+    handleError(res, err, "Failed to requeue topic");
+  }
+}
+
 export async function deleteTopic(req, res) {
   try {
     const id = Number(req.params.id);
@@ -154,9 +283,39 @@ export async function deleteTopic(req, res) {
   }
 }
 
-export async function runNow(_req, res) {
+export async function getAgentMemory(_req, res) {
   try {
-    const result = await runAutomationNow();
+    const guidelines = await blogAgentModel.getGuidelines(
+      BLOG_AUTOMATION_GUIDELINES_ID,
+    );
+    res.json({ guidelines });
+  } catch (err) {
+    handleError(res, err, "Failed to load automation agent memory");
+  }
+}
+
+export async function updateAgentMemory(req, res) {
+  try {
+    const content = String(req.body?.content ?? "").trim();
+    if (!content) {
+      return res.status(400).json({ error: "content is required" });
+    }
+    const guidelines = await blogAgentModel.updateGuidelines(
+      content,
+      currentUserId(req),
+      BLOG_AUTOMATION_GUIDELINES_ID,
+    );
+    res.json({ guidelines });
+  } catch (err) {
+    handleError(res, err, "Failed to save automation agent memory");
+  }
+}
+
+export async function runNow(req, res) {
+  try {
+    const result = await runAutomationNow({
+      bootstrapTrending: Boolean(req.body?.bootstrap_trending),
+    });
     res.json({ result });
   } catch (err) {
     handleError(res, err, "Failed to run automations");
@@ -171,7 +330,7 @@ export async function testSampleEmail(req, res) {
       emails.push(...parseEmailList(settings.approval_emails));
     }
     if (!emails.length) {
-      return res.status(400).json({ error: "Add a sample blog email first" });
+      return res.status(400).json({ error: "Add an approval email first" });
     }
     const invalid = emails.filter((e) => !isValidEmail(e));
     if (invalid.length) {
@@ -179,8 +338,8 @@ export async function testSampleEmail(req, res) {
         error: `Invalid email(s): ${invalid.join(", ")}`,
       });
     }
-    await sendTestSampleEmail(emails);
-    res.json({ ok: true, sentTo: emails });
+    const result = await sendTestSampleEmail(emails);
+    res.json({ ok: true, sentTo: emails, ...result });
   } catch (err) {
     handleError(res, err, "Failed to send test email");
   }

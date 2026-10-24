@@ -45,13 +45,22 @@ const requireBlogEdit = [
 
 router.use(requireBlogDb);
 
+// Public approval links (no admin auth)
+router.get("/approvals/go", controller.goApproval);
+router.get("/approvals/revise", controller.showRevisionFormHandler);
+router.post("/approvals/revise", controller.submitRevisionHandler);
+
 router.get("/settings", ...requireBlogView, controller.getSettings);
 router.put("/settings", ...requireBlogEdit, controller.updateSettings);
 
 router.get("/topics", ...requireBlogView, controller.listTopics);
 router.post("/topics", ...requireBlogEdit, controller.createTopic);
 router.put("/topics/:id", ...requireBlogEdit, controller.updateTopic);
+router.post("/topics/:id/requeue", ...requireBlogEdit, controller.requeueTopic);
 router.delete("/topics/:id", ...requireBlogEdit, controller.deleteTopic);
+
+router.get("/agent-memory", ...requireBlogView, controller.getAgentMemory);
+router.put("/agent-memory", ...requireBlogEdit, controller.updateAgentMemory);
 
 router.post("/run-now", ...requireBlogEdit, controller.runNow);
 router.post("/test-email", ...requireBlogEdit, controller.testSampleEmail);
