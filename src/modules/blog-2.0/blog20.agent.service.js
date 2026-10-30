@@ -14,6 +14,7 @@ import {
 } from "../agents/blog/blogWritingStyle.js";
 import { createBlog20AgentTools } from "./blog20.tools.js";
 import * as settingsModel from "./blog20.model.js";
+import { buildClientSiteContextBlock } from "./blog20.siteContext.js";
 
 const AGENT_TYPE = "blog_2_0";
 const GUIDELINES_ID = 2;
@@ -31,9 +32,10 @@ const DEFAULT_BRIGHT_CRM_GUIDELINES = `Bright CRM Blog Agent (Blog-2.0):
 - Audience: construction companies, contractors, project managers, estimators, site supers
 - Topics: CRM, leads, quotations, project tracking, team collaboration, construction business ops
 - Author default: Bright CRM Team
-- Website: client's MailerLite site — drafts are for MailerLite blog editor, NOT tech2globe.com
+- Website: client's MailerLite preview site (URLs in system context) — NOT tech2globe.com
+- Match homepage messaging: "Build Smarter. Manage Better." and construction-business pain points
 - Always use tool create_bright_crm_blog_draft to save posts (never Tech2Globe create_blog_post)
-- Tone: professional, practical, helpful — not salesy or hypey
+- Tone: professional, practical, helpful — same voice as brightcrm MailerLite site, not hypey
 - Use real jobsite scenarios: missed RFIs, change orders, subcontractor handoffs, bid deadlines
 - Prefer concrete numbers (response times, % rework, quote turnaround) over vague "efficiency" talk`;
 
@@ -147,7 +149,7 @@ async function ensureBrightCrmGuidelines() {
   return blogAgentModel.getGuidelines(GUIDELINES_ID);
 }
 
-function buildSystemContext({ guidelines, settings, humanizePercent }) {
+function buildSystemContext({ guidelines, settings, humanizePercent, clientSiteBlock = "" }) {
   const human = clampHumanizePercent(
     humanizePercent ?? guidelines?.humanize_percent,
     70,
@@ -162,6 +164,7 @@ function buildSystemContext({ guidelines, settings, humanizePercent }) {
     "## Blog-2.0 project (isolated from Tech2Globe Blog)",
     `- Client site: ${settings.client_site_url || "Bright CRM MailerLite site"}`,
     `- Client blog: ${settings.client_blog_url || settings.client_site_url || ""}`,
+    clientSiteBlock ? `\n${clientSiteBlock}\n` : "",
     "- Save posts ONLY with create_bright_crm_blog_draft",
     "- After save: if approval emails are configured, team gets email with Preview + Yes/No — Yes triggers MailerLite bot automatically",
     "- If auto-push is enabled in settings, bot pushes immediately without email approval",
@@ -228,6 +231,8 @@ export async function runBlog20Agent({
     blogAgentModel.listMessages(threadId),
   ]);
 
+  const clientSiteBlock = await buildClientSiteContextBlock(settings).catch(() => "");
+
   const humanizePercent = clampHumanizePercent(guidelines?.humanize_percent, 70);
 
   const tools = createBlog20AgentTools({
@@ -236,7 +241,12 @@ export async function runBlog20Agent({
     humanizePercent,
   });
 
-  let instructions = buildSystemContext({ guidelines, settings, humanizePercent });
+  let instructions = buildSystemContext({
+    guidelines,
+    settings,
+    humanizePercent,
+    clientSiteBlock,
+  });
   if (revisionMode) {
     instructions += REVISION_MODE_INSTRUCTIONS;
   } else if (writeNowMode) {
