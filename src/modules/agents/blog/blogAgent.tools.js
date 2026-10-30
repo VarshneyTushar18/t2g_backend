@@ -7,6 +7,7 @@ import {
   pickStockImage,
 } from "./blogAgent.images.js";
 import { generateAndUploadBlogImage } from "../blog-image/blogImage.generate.js";
+import { humanizeBlogHtml } from "./blogAgent.humanize.js";
 
 function slugify(title) {
   return String(title || "post")
@@ -165,8 +166,14 @@ function markdownToHtml(md) {
 
 export { markdownToHtml };
 
-/** @param {{ canPublish: boolean, canDelete: boolean }} permissions */
-export function createBlogAgentTools({ canPublish, canDelete }) {
+/** @param {{ canPublish: boolean, canDelete: boolean, humanizePercent?: number }} permissions */
+export function createBlogAgentTools({
+  canPublish,
+  canDelete,
+  humanizePercent = 70,
+  automationMode = false,
+}) {
+  const effectiveHumanize = automationMode ? 35 : humanizePercent;
   const createBlogPost = tool({
     name: "create_blog_post",
     description:
@@ -227,37 +234,56 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
           resolvedStatus = "draft";
         }
 
-        const slug = params.slug || slugify(params.title);
+        const slug = slugify(params.slug || params.title);
         let html = markdownToHtml(params.content);
+        if (!automationMode && effectiveHumanize >= 40) {
+          html = await humanizeBlogHtml(html, {
+            humanizePercent: effectiveHumanize,
+            title: params.title,
+          });
+        }
         const author = (params.author_name || "Tech2Globe Digital Team").trim();
         const topicHint = [params.title, params.focusKeyword, ...(params.tags || [])]
           .filter(Boolean)
           .join(" ");
-        const cover =
-          params.featured_image || pickStockImage(topicHint).url;
+        const stockPick = pickStockImage(topicHint);
+        const cover = params.featured_image || stockPick.url;
+        const featuredAlt = String(
+          params.focusKeyword || params.title || stockPick.alt || "Tech2Globe blog",
+        )
+          .trim()
+          .slice(0, 125);
+        const featuredTitle = String(params.title || params.metaTitle || "")
+          .trim()
+          .slice(0, 255);
         if (params.inline_image_urls && params.inline_image_urls.length) {
           html = injectInlineImagesFromUrls(html, params.inline_image_urls);
         } else if (params.add_inline_images !== false) {
           html = injectInlineImages(html, topicHint);
         }
 
+        const metaTitle = (params.metaTitle || params.title).slice(0, 60);
+        const metaDescription = (
+          params.metaDescription ||
+          params.excerpt ||
+          params.title
+        ).slice(0, 160);
+
         const post = await blogModel.createPost({
           title: params.title,
           slug,
-          excerpt: params.excerpt || params.title,
+          excerpt: params.excerpt || metaDescription.slice(0, 300) || params.title,
           content: html,
           featured_image: cover,
+          featured_image_title: featuredTitle || null,
+          featured_image_alt: featuredAlt || null,
           status: resolvedStatus,
           author_name: author,
           categories: params.categoryIds || [],
           tags: params.tags || [],
           seo: {
-            meta_title: (params.metaTitle || params.title).slice(0, 60),
-            meta_description: (
-              params.metaDescription ||
-              params.excerpt ||
-              params.title
-            ).slice(0, 160),
+            meta_title: metaTitle,
+            meta_description: metaDescription,
             focus_keyword:
               params.focusKeyword ||
               (params.tags && params.tags[0]) ||
@@ -277,6 +303,8 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
           author_name: post.author_name,
           url: `https://www.tech2globe.com/blogs/${post.slug}`,
           featured_image: cover,
+          humanized: humanizePercent >= 40,
+          humanize_percent: humanizePercent,
           note:
             resolvedStatus === "draft" && canPublish === false
               ? "Saved as draft — user does not have publish permission."
@@ -330,10 +358,14 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
           resolvedStatus = existing.status === "publish" ? "publish" : "draft";
         }
 
-        const content =
-          params.content != null
-            ? markdownToHtml(params.content)
-            : existing.content;
+        let content = existing.content;
+        if (params.content != null) {
+          content = markdownToHtml(params.content);
+          content = await humanizeBlogHtml(content, {
+            humanizePercent,
+            title: params.title || existing.title,
+          });
+        }
 
         const seo = {
           ...(existing.seo || {}),
@@ -357,17 +389,33 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
             existing.title.split(" ")[0],
         };
 
+        const nextTitle = params.title || existing.title;
+        const nextSlug = params.slug
+          ? slugify(params.slug)
+          : params.title
+            ? slugify(params.title)
+            : existing.slug;
+
         const updated = await blogModel.updatePost(existing.id, {
-          title: params.title || existing.title,
-          slug: params.slug || existing.slug,
+          title: nextTitle,
+          slug: nextSlug,
           excerpt: params.excerpt || existing.excerpt,
           content,
           featured_image: params.featured_image || existing.featured_image,
+          featured_image_title:
+            existing.featured_image_title || nextTitle.slice(0, 255),
+          featured_image_alt:
+            existing.featured_image_alt ||
+            seo.focus_keyword ||
+            nextTitle.slice(0, 125),
           status: resolvedStatus,
           author_name: params.author_name || existing.author,
           categories: existing.categories || [],
           tags: params.tags || existing.tags || [],
-          seo,
+          seo: {
+            ...seo,
+            canonical_url: `https://www.tech2globe.com/blogs/${nextSlug}`,
+          },
         });
 
         return {
@@ -535,6 +583,10 @@ export function createBlogAgentTools({ canPublish, canDelete }) {
       }
     },
   });
+
+  if (automationMode) {
+    return [createBlogPost, updateBlogPost];
+  }
 
   return [
     pickBlogImage,

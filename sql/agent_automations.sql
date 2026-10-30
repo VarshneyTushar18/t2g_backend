@@ -9,6 +9,12 @@ CREATE TABLE IF NOT EXISTS agent_automations_settings (
   posts_per_run INT NOT NULL DEFAULT 1,
   mode ENUM('draft_only', 'pending_email', 'auto_publish') NOT NULL DEFAULT 'pending_email',
   approval_emails JSON NULL,
+  topic_source ENUM('manual','auto_trending') NOT NULL DEFAULT 'manual',
+  auto_niche TEXT NULL,
+  auto_default_author_name VARCHAR(255) NULL,
+  auto_default_category_ids JSON NULL,
+  auto_default_tags JSON NULL,
+  posts_stagger_seconds INT NOT NULL DEFAULT 120,
   last_run_at DATETIME NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );

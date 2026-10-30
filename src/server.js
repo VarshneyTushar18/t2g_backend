@@ -5,11 +5,13 @@ import { testBlogDBConnection, isBlogDbReady } from "./config/blogDb.js";
 import { ensureBlogTables } from "./modules/blog/blog.setup.js";
 import { ensureBlogAgentTables } from "./modules/agents/blog/blogAgent.setup.js";
 import { ensureAgentAutomationsTables } from "./modules/agents/automations/agentAutomations.setup.js";
+import { ensureBlog20Ready } from "./modules/blog-2.0/blog20.setup.js";
 import { ensureAiIntegrationsTable } from "./modules/agents/ai-integrations/aiIntegrations.model.js";
 import { refreshConfiguredFlag } from "./modules/agents/lib/openai.js";
 import { startPendingProcessor } from "./modules/elevenlabs/fallback/elevenlabs.fallback.service.js";
 import { startLeadsReportScheduler } from "./modules/leads/reports/leadsReport.scheduler.js";
 import { startAgentAutomationsScheduler } from "./modules/agents/automations/agentAutomations.scheduler.js";
+import { startBlog20AutomationsScheduler } from "./modules/blog-2.0/blog20.automation.scheduler.js";
 import {
   ensureCareerApprovalReady,
   startCareerApprovalScheduler,
@@ -34,6 +36,9 @@ testBlogDBConnection().then((ok) => {
     ensureBlogTables();
     ensureBlogAgentTables();
     ensureAgentAutomationsTables();
+    ensureBlog20Ready().catch((err) => {
+      console.error("[blog-2.0] setup failed:", err.message);
+    });
   }
 });
 
@@ -51,5 +56,6 @@ app.listen(PORT, () => {
   startPendingProcessor();
   startLeadsReportScheduler();
   startAgentAutomationsScheduler();
+  startBlog20AutomationsScheduler();
   startCareerApprovalScheduler();
 });

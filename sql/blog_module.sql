@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS blog_posts (
   excerpt TEXT,
   content LONGTEXT NOT NULL,
   featured_image VARCHAR(1000) DEFAULT NULL,
+  featured_image_title VARCHAR(500) DEFAULT NULL,
+  featured_image_alt VARCHAR(500) DEFAULT NULL,
   meta_title VARCHAR(500) DEFAULT NULL,
   meta_description TEXT DEFAULT NULL,
   focus_keyword VARCHAR(255) DEFAULT NULL,
