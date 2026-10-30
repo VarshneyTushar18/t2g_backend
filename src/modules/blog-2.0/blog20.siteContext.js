@@ -35,6 +35,54 @@ const BRIGHT_CRM_STATIC_BRIEF = `
 **CTA style (soft):** Optional closing line about bringing control to construction operations / discussing how CRM fits their process — not aggressive sales.
 `.trim();
 
+/**
+ * Posts already on the client MailerLite blog — new drafts must feel like siblings of these.
+ * (Titles from https://preview.mailerlite.io/.../blog — refresh via live fetch when possible.)
+ */
+const BRIGHT_CRM_EXISTING_BLOG_STYLE = `
+## Existing posts on the client blog (match THIS style)
+
+These are live on the Bright CRM MailerLite blog. **Every new post must look like it was written by the same author for the same blog** — similar title pattern, depth, headings, and CRM-for-construction angle.
+
+**Example titles already published:**
+- Boosting Efficiency in SMBs with CRM (construction / small business focus)
+- Understanding Human Work Error: Causes and Solutions
+- Modern Workplaces with AI (practical workplace + tools, not sci-fi)
+- Bright CRM: Simplify Your Sales, Manage Your Customers, Grow Your Business
+
+**How to write the next post (mandatory template):**
+1. **Title:** Clear benefit or question; construction SMB or CRM in scope; 8–14 words; Title Case.
+2. **Excerpt / meta:** 1–2 sentences, 120–160 chars for meta; states who the article helps and the outcome.
+3. **Length:** ~800–1,200 words unless the user asks otherwise.
+4. **Structure:**
+   - Opening: hook + problem (jobsite/office pain, e.g. missed follow-ups, scattered data).
+   - **3–5 sections** with \`<h2>\` headings (concrete, not generic "Introduction").
+   - Use \`<h3>\` sparingly; bullets where listing tips or steps.
+   - Tie sections to Bright CRM capabilities naturally (leads, quotes, projects, reminders, visibility) — not a product brochure.
+   - Close: short summary + soft CTA (e.g. bringing control to construction operations / exploring Bright CRM).
+5. **Voice:** Same as existing posts — helpful expert, US/International English, **never say "Claude CRM"** (product name is **Bright CRM** only).
+6. **Topics that fit this blog:** efficiency, quotation follow-up, CRM for contractors, team coordination, reducing errors, dashboards, AI as a workplace tool (balanced, not hype).
+7. **Avoid:** Duplicating an existing title above; Tech2Globe; generic AI buzz without construction context; fake stats or client names.
+
+When the user only gives a topic, **infer title, keyword, excerpt, and full HTML body** using this template — then call create_bright_crm_blog_draft.
+`.trim();
+
+function extractBlogTitlesFromListing(text) {
+  if (!text) return [];
+  const titles = [];
+  const patterns = [
+    /Boosting Efficiency[^.|\n]{0,80}/i,
+    /Understanding Human Work Error[^.|\n]{0,80}/i,
+    /Modern Workplaces with AI[^.|\n]{0,40}/i,
+    /Bright CRM:[^.|\n]{0,100}/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) titles.push(m[0].trim());
+  }
+  return [...new Set(titles)];
+}
+
 function cacheKey(siteUrl, blogUrl) {
   return `${siteUrl || ""}|${blogUrl || ""}`;
 }
@@ -98,9 +146,11 @@ export async function buildClientSiteContextBlock(settings) {
     `- **Project:** ${project}`,
     `- **Live preview (write as if publishing here):** ${siteUrl}`,
     `- **Blog index:** ${blogUrl}`,
-    "- Posts must read like they belong on this MailerLite site — same audience, terminology, and construction-CRM focus as the homepage.",
-    "- Use HTML suitable for MailerLite blog editor: clear H2/H3 sections, short paragraphs, optional bullet lists, one focus keyword per post.",
+    "- **Primary rule:** Generate blog posts **according to the existing posts on that blog URL** — same style, length, and construction-CRM focus as the articles already listed there (not generic internet blog style).",
+    "- Use HTML for MailerLite blog editor: `<h2>`, `<h3>`, `<p>`, `<ul><li>`, optional `<strong>`.",
     "- Do NOT mention Tech2Globe, internal tools, or fake URLs. Do NOT invent case studies unless user provided facts.",
+    "",
+    BRIGHT_CRM_EXISTING_BLOG_STYLE,
     "",
     BRIGHT_CRM_STATIC_BRIEF,
   ];
@@ -119,10 +169,14 @@ export async function buildClientSiteContextBlock(settings) {
       );
     }
     if (live.blog) {
+      const titles = extractBlogTitlesFromListing(live.blog);
       parts.push(
         "",
-        "## Existing blog listing snapshot (write complementary topics; avoid duplicating titles)",
-        live.blog.slice(0, 1800),
+        "## Live blog index (must match these posts' style)",
+        titles.length
+          ? `Detected titles: ${titles.map((t) => `"${t}"`).join("; ")}`
+          : live.blog.slice(0, 1800),
+        titles.length ? `\nFull listing text:\n${live.blog.slice(0, 1200)}` : "",
       );
     }
   } catch {

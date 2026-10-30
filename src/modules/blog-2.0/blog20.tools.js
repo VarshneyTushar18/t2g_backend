@@ -11,7 +11,7 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
   const createBrightCrmBlogDraft = tool({
     name: "create_bright_crm_blog_draft",
     description:
-      "Save a blog draft for Bright CRM (MailerLite website). NEVER use Tech2Globe blog tools. This stores a draft for manual publish on the client's MailerLite site.",
+      "Save a Bright CRM blog draft for the client's MailerLite site (/blog). Content must match existing posts on that blog (title style, ~800–1200 words, H2 sections, construction CRM topics). NEVER use Tech2Globe blog tools.",
     parameters: z.object({
       title: z.string(),
       content: z.string().describe("Full body as clean HTML or Markdown"),

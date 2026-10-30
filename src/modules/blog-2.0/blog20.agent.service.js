@@ -83,7 +83,7 @@ function augmentMessageForAgent(message) {
     return `${text}\n\n[Write NOW: User confirmed. Call create_bright_crm_blog_draft immediately with the full HTML blog from this conversation. Do not ask questions.]`;
   }
   if (hasBlogBrief(text)) {
-    return `${text}\n\n[Write-first: If enough detail is present, call create_bright_crm_blog_draft in this turn. Use defaults for anything missing — author "Bright CRM Team", construction SMB audience.]`;
+    return `${text}\n\n[Write-first: Produce a complete Bright CRM blog post matching existing articles on the client MailerLite /blog page (800–1200 words, H2 sections, construction CRM angle). Call create_bright_crm_blog_draft in this turn. Author "Bright CRM Team".]`;
   }
   return text;
 }
@@ -170,7 +170,7 @@ function buildSystemContext({ guidelines, settings, humanizePercent, clientSiteB
     "- If auto-push is enabled in settings, bot pushes immediately without email approval",
     "- NEVER say the post is live on the client website until a human Publishes in MailerLite",
     "- NEVER use a fake MailerLite preview URL — only mention Admin → Blog-2.0 → Drafts or the approval email preview link",
-    "- Write-first workflow: when the user gives a topic, title, or brief — write the full blog IMMEDIATELY",
+    "- Write-first workflow: when the user gives a topic — write a **full blog post in the same style as existing posts on the client blog URL** (see Client website alignment), then save IMMEDIATELY",
     '- Defaults: author "Bright CRM Team", audience = construction SMBs, infer SEO keyword from title',
     "- Do NOT run a long Q&A checklist before writing — ask at most ONE short question only if the message has zero topic",
     "- When user says ok/confirm/yes/go ahead/generate/write it, use prior messages and save the blog NOW",
