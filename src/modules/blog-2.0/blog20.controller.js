@@ -7,6 +7,7 @@ import {
   getMailerLiteBotStatus,
   submitMailerLiteBotOtp,
   forceResetMailerLiteBot,
+  isMailerLiteBotBusy,
 } from "./blog20.mailerliteBot.js";
 import { getPublicApiBase } from "../agents/automations/blogApproval.email.js";
 import {
@@ -140,18 +141,56 @@ export async function deleteDraftsBulk(req, res) {
 }
 
 export async function pushDraftToMailerLiteSite(req, res) {
+  const draftId = Number(req.params.id);
+  const publishLive = Boolean(req.body?.publish_live);
+
   try {
-    const result = await pushDraftToMailerLite(Number(req.params.id), {
-      publishLive: Boolean(req.body?.publish_live),
-    });
-    res.json({ success: true, ...result });
-  } catch (err) {
-    console.error("[blog-2.0] bot push failed:", err.message || err);
-    if (err.message?.includes("disabled") || err.name === "TimeoutError") {
-      console.error(
-        "[blog-2.0] Hint: check uploads/blog20-bot-debug/ and pm2 logs for [blog-2.0-bot] steps",
-      );
+    const draft = await draftsModel.getDraftById(draftId);
+    if (!draft) {
+      return res.status(404).json({ message: `Draft ${draftId} not found` });
     }
+
+    const settings = await model.getSettings();
+    if (!settings.mailerlite_bot_enabled) {
+      return res.status(400).json({
+        message:
+          "MailerLite browser bot is disabled. Enable it in Blog-2.0 → MailerLite.",
+      });
+    }
+
+    if (isMailerLiteBotBusy()) {
+      return res.status(409).json({
+        message:
+          "MailerLite bot is already running. Wait for it to finish or use Stop bot.",
+      });
+    }
+
+    if (draft.mailerlite_push_status === "processing") {
+      return res.status(409).json({
+        message:
+          "This draft is already being pushed. Watch progress below or use Stop bot.",
+      });
+    }
+
+    // Playwright push (OTP, login) can take many minutes — do not hold the HTTP request.
+    void pushDraftToMailerLite(draftId, { publishLive }).catch((err) => {
+      console.error("[blog-2.0] bot push failed (background):", err.message || err);
+      if (err.message?.includes("disabled") || err.name === "TimeoutError") {
+        console.error(
+          "[blog-2.0] Hint: check uploads/blog20-bot-debug/ and pm2 logs for [blog-2.0-bot] steps",
+        );
+      }
+    });
+
+    return res.status(202).json({
+      success: true,
+      accepted: true,
+      draftId,
+      publishLive,
+      note: "MailerLite push started. Keep this page open — enter OTP in the yellow banner when the bot asks for it.",
+    });
+  } catch (err) {
+    console.error("[blog-2.0] bot push enqueue failed:", err.message || err);
     res.status(err.status || 500).json({
       message: err.message || "MailerLite bot push failed",
     });
