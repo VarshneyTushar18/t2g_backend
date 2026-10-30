@@ -11,6 +11,7 @@ import { refreshConfiguredFlag } from "./modules/agents/lib/openai.js";
 import { startPendingProcessor } from "./modules/elevenlabs/fallback/elevenlabs.fallback.service.js";
 import { startLeadsReportScheduler } from "./modules/leads/reports/leadsReport.scheduler.js";
 import { startAgentAutomationsScheduler } from "./modules/agents/automations/agentAutomations.scheduler.js";
+import { startBlog20AutomationsScheduler } from "./modules/blog-2.0/blog20.automation.scheduler.js";
 import {
   ensureCareerApprovalReady,
   startCareerApprovalScheduler,
@@ -55,5 +56,6 @@ app.listen(PORT, () => {
   startPendingProcessor();
   startLeadsReportScheduler();
   startAgentAutomationsScheduler();
+  startBlog20AutomationsScheduler();
   startCareerApprovalScheduler();
 });

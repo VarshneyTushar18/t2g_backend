@@ -27,9 +27,16 @@ const DEFAULTS = {
   approval_emails: [],
   teams_webhook_url: "",
   timezone: "Asia/Kolkata",
+  automation_enabled: false,
   automation_frequency: "weekly",
   automation_run_days: [1],
   automation_run_time: "12:00",
+  automation_posts_per_run: 1,
+  automation_topic_source: "auto_research",
+  automation_auto_niche:
+    "construction CRM, general contractors, project managers, bids, pipeline, jobsite efficiency, Bright CRM",
+  automation_posts_stagger_seconds: 120,
+  automation_last_run_at: null,
   newsletter_send_timing: "scheduled",
   newsletter_send_time: "12:00",
   notes:
@@ -78,9 +85,22 @@ function mapRow(row) {
     website_mode: row.website_mode || DEFAULTS.website_mode,
     newsletter_mode: row.newsletter_mode || DEFAULTS.newsletter_mode,
     timezone: row.timezone || DEFAULTS.timezone,
+    automation_enabled: Boolean(row.automation_enabled),
     automation_frequency: row.automation_frequency || DEFAULTS.automation_frequency,
     automation_run_days: parseJsonArray(row.automation_run_days, DEFAULTS.automation_run_days),
     automation_run_time: row.automation_run_time || DEFAULTS.automation_run_time,
+    automation_posts_per_run: Math.min(
+      Math.max(Number(row.automation_posts_per_run ?? DEFAULTS.automation_posts_per_run), 1),
+      5,
+    ),
+    automation_topic_source:
+      row.automation_topic_source === "manual" ? "manual" : "auto_research",
+    automation_auto_niche: row.automation_auto_niche || DEFAULTS.automation_auto_niche,
+    automation_posts_stagger_seconds: Math.min(
+      Math.max(Number(row.automation_posts_stagger_seconds ?? 120), 0),
+      900,
+    ),
+    automation_last_run_at: row.automation_last_run_at || null,
     newsletter_send_timing: row.newsletter_send_timing || DEFAULTS.newsletter_send_timing,
     newsletter_send_time: row.newsletter_send_time || DEFAULTS.newsletter_send_time,
     mailerlite_enabled: Boolean(row.mailerlite_enabled),
@@ -209,6 +229,30 @@ export async function ensureBlog20Tables() {
       col: "mailerlite_bot_otp_submitted_at",
       sql: "ALTER TABLE blog_2_0_settings ADD COLUMN mailerlite_bot_otp_submitted_at TIMESTAMP NULL AFTER mailerlite_bot_otp_code",
     },
+    {
+      col: "automation_enabled",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN automation_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER newsletter_send_time",
+    },
+    {
+      col: "automation_posts_per_run",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN automation_posts_per_run TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER automation_run_time",
+    },
+    {
+      col: "automation_topic_source",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN automation_topic_source ENUM('manual','auto_research') NOT NULL DEFAULT 'auto_research' AFTER automation_posts_per_run",
+    },
+    {
+      col: "automation_auto_niche",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN automation_auto_niche TEXT NULL AFTER automation_topic_source",
+    },
+    {
+      col: "automation_posts_stagger_seconds",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN automation_posts_stagger_seconds SMALLINT UNSIGNED NOT NULL DEFAULT 120 AFTER automation_auto_niche",
+    },
+    {
+      col: "automation_last_run_at",
+      sql: "ALTER TABLE blog_2_0_settings ADD COLUMN automation_last_run_at TIMESTAMP NULL AFTER automation_posts_stagger_seconds",
+    },
   ];
   const [cols] = await blogDb.query(
     `SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -217,6 +261,15 @@ export async function ensureBlog20Tables() {
   const existing = new Set(cols.map((c) => c.COLUMN_NAME));
   for (const { col, sql } of alters) {
     if (!existing.has(col)) await blogDb.query(sql);
+  }
+
+  try {
+    await blogDb.query(
+      `ALTER TABLE blog_2_0_settings
+       MODIFY COLUMN automation_frequency ENUM('daily','weekly','monthly') NOT NULL DEFAULT 'weekly'`,
+    );
+  } catch {
+    /* column may already allow daily */
   }
 
   await blogDb.query(
@@ -426,6 +479,93 @@ export async function upsertSettings(payload, updatedBy = null) {
   );
 
   return getSettings();
+}
+
+export async function upsertAutomationSettings(payload, updatedBy = null) {
+  const current = await getSettings();
+  const runDays =
+    payload.automation_run_days !== undefined
+      ? JSON.stringify(
+          Array.isArray(payload.automation_run_days)
+            ? payload.automation_run_days
+            : [Number(payload.automation_run_days) || 1],
+        )
+      : JSON.stringify(current.automation_run_days || DEFAULTS.automation_run_days);
+
+  const frequency = payload.automation_frequency || current.automation_frequency;
+  const allowedFreq = new Set(["daily", "weekly", "monthly"]);
+  const nextFrequency = allowedFreq.has(frequency) ? frequency : "weekly";
+
+  await blogDb.query(
+    `UPDATE blog_2_0_settings SET
+      automation_enabled = ?,
+      automation_frequency = ?,
+      automation_run_days = ?,
+      automation_run_time = ?,
+      automation_posts_per_run = ?,
+      automation_topic_source = ?,
+      automation_auto_niche = ?,
+      automation_posts_stagger_seconds = ?,
+      timezone = ?,
+      updated_by = COALESCE(?, updated_by),
+      updated_at = CURRENT_TIMESTAMP
+     WHERE id = 1`,
+    [
+      payload.automation_enabled !== undefined
+        ? payload.automation_enabled
+          ? 1
+          : 0
+        : current.automation_enabled
+          ? 1
+          : 0,
+      nextFrequency,
+      runDays,
+      payload.automation_run_time || current.automation_run_time || DEFAULTS.automation_run_time,
+      Math.min(
+        Math.max(
+          Number(
+            payload.automation_posts_per_run ??
+              current.automation_posts_per_run ??
+              DEFAULTS.automation_posts_per_run,
+          ),
+          1,
+        ),
+        5,
+      ),
+      payload.automation_topic_source !== undefined
+        ? payload.automation_topic_source === "manual"
+          ? "manual"
+          : "auto_research"
+        : current.automation_topic_source === "manual"
+          ? "manual"
+          : "auto_research",
+      payload.automation_auto_niche ??
+        current.automation_auto_niche ??
+        DEFAULTS.automation_auto_niche,
+      Math.min(
+        Math.max(
+          Number(
+            payload.automation_posts_stagger_seconds ??
+              current.automation_posts_stagger_seconds ??
+              120,
+          ),
+          0,
+        ),
+        900,
+      ),
+      payload.timezone || current.timezone || DEFAULTS.timezone,
+      updatedBy,
+    ],
+  );
+
+  return getSettings();
+}
+
+export async function markAutomationLastRun(at = new Date()) {
+  await blogDb.query(
+    `UPDATE blog_2_0_settings SET automation_last_run_at = ? WHERE id = 1`,
+    [at],
+  );
 }
 
 export async function setMailerLiteSessionAlert({

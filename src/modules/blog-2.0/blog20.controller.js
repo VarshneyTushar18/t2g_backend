@@ -38,7 +38,11 @@ export async function getOverview(req, res) {
       phases: [
         { id: 1, label: "Setup & MailerLite connection", status: checklist.ready_percent >= 50 ? "active" : "pending" },
         { id: 2, label: "Newsletter draft campaigns", status: "pending" },
-        { id: 3, label: "Scheduled automations", status: "pending" },
+        {
+          id: 3,
+          label: "Scheduled automations",
+          status: settings.automation_enabled ? "active" : "pending",
+        },
         { id: 4, label: "Teams notifications", status: "pending" },
       ],
     });

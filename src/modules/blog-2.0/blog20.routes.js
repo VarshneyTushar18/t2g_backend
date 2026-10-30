@@ -6,6 +6,7 @@ import {
 import { canPerform } from "../auth/modulePermissions.js";
 import { requireBlogDb } from "../../middleware/requireBlogDb.js";
 import * as controller from "./blog20.controller.js";
+import * as automationController from "./blog20.automation.controller.js";
 
 const router = express.Router();
 const MODULE = "blog_2_0";
@@ -78,5 +79,13 @@ router.post(
   ...requireBlog20Edit,
   controller.testBlog20ApprovalEmail,
 );
+
+router.get("/automations", ...requireBlog20View, automationController.getAutomationState);
+router.put("/automations/settings", ...requireBlog20Edit, automationController.updateAutomationSettings);
+router.post("/automations/topics", ...requireBlog20Edit, automationController.createAutomationTopic);
+router.put("/automations/topics/:id", ...requireBlog20Edit, automationController.updateAutomationTopic);
+router.delete("/automations/topics/:id", ...requireBlog20Edit, automationController.deleteAutomationTopic);
+router.post("/automations/topics/:id/retry", ...requireBlog20Edit, automationController.retryAutomationTopic);
+router.post("/automations/run-now", ...requireBlog20Edit, automationController.runAutomationNowHandler);
 
 export default router;
