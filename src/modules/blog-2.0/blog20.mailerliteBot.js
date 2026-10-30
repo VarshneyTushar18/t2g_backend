@@ -2025,7 +2025,11 @@ async function submitNewPostForm(page, title) {
   }
 
   logStep("Clicking create/save on new post form");
-  await createBtn.click({ timeout: 10000 });
+  await dismissOverlays(page);
+  await clickLocatorResilient(page, createBtn, {
+    label: "create/save on new post form",
+    timeout: 35000,
+  });
   const url = await waitForPostCreateNavigation(page, 28000);
   await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(1500);
