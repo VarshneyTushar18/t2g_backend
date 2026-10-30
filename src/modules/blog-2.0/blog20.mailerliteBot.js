@@ -800,7 +800,13 @@ function buildBlogUrls(siteId) {
 }
 
 function blogListNewestUrl(siteId) {
-  return `https://dashboard.mailerlite.com/sites/${siteId}/blog?sort=-id`;
+  return `https://dashboard.mailerlite.com/sites/${siteId}/blog?sort=-id&page=1`;
+}
+
+function titleSnippets(title) {
+  const full = String(title || "").trim();
+  if (!full) return [];
+  return [...new Set([full, full.slice(0, 48), full.slice(0, 32), full.slice(0, 24)].filter((s) => s.length >= 12))];
 }
 
 async function goToBlogListNewestFirst(page, siteId, label = "blog list (newest first)") {
@@ -1169,17 +1175,22 @@ async function openBlogList(page, siteId, creds = null) {
 }
 
 async function findPostOnBlogList(page, title, siteId = null) {
-  const full = String(title || "").trim();
-  if (!full) return false;
-  const snippets = [...new Set([full.slice(0, 48), full.slice(0, 32), full.slice(0, 24)].filter((s) => s.length >= 12))];
+  const snippets = titleSnippets(title);
+  if (!snippets.length) return false;
 
   if (siteId) {
     await goToBlogListNewestFirst(page, siteId, "blog list page 1 for post lookup");
   }
 
   for (const snippet of snippets) {
-    const postLink = page.locator('a[href*="/blog/posts/"]').filter({ hasText: snippet }).first();
-    if (await postLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+    for (const hrefPart of ["/content/", "/blog/posts/"]) {
+      const link = page.locator(`a[href*="${hrefPart}"]`).filter({ hasText: snippet }).first();
+      if (await link.isVisible({ timeout: 2000 }).catch(() => false)) {
+        return true;
+      }
+    }
+    const row = page.locator("div").filter({ hasText: snippet }).first();
+    if (await row.isVisible({ timeout: 1500 }).catch(() => false)) {
       return true;
     }
   }
@@ -1817,54 +1828,65 @@ async function logVisibleButtons(page, label = "debug") {
   }
 }
 
+function isMailerLitePostEditorUrl(url = "") {
+  return isMailerLiteContentUrl(url) || isMailerLitePostUrl(url);
+}
+
 async function clickPostInBlogList(page, title) {
-  const snippet = String(title || "").trim().slice(0, 48);
-  if (!snippet) return false;
+  const snippets = titleSnippets(title);
+  if (!snippets.length) return false;
 
-  const postLink = page
-    .locator(`a[href*="/blog/posts/"]`)
-    .filter({ hasText: snippet })
-    .first();
-  if (await postLink.isVisible({ timeout: 5000 }).catch(() => false)) {
-    logStep(`Opening post link: ${snippet.slice(0, 40)}`);
-    await postLink.click({ timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(2500);
-    return page.url().includes("/posts/");
-  }
+  for (const snippet of snippets) {
+    for (const hrefPart of ["/content/", "/blog/posts/"]) {
+      const postLink = page.locator(`a[href*="${hrefPart}"]`).filter({ hasText: snippet }).first();
+      if (await postLink.isVisible({ timeout: 4000 }).catch(() => false)) {
+        logStep(`Opening post via ${hrefPart} link: ${snippet.slice(0, 40)}`);
+        await postLink.click({ timeout: 10000 }).catch(() => {});
+        await page.waitForTimeout(2500);
+        if (isMailerLitePostEditorUrl(page.url())) return true;
+      }
+    }
 
-  const row = page
-    .locator(
-      `tr:has-text("${snippet}"), [role="row"]:has-text("${snippet}"), [class*="post"]:has-text("${snippet}")`,
-    )
-    .first();
-  if (await row.isVisible({ timeout: 4000 }).catch(() => false)) {
-    logStep(`Opening existing post row: ${snippet.slice(0, 40)}`);
-    await row.click({ timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(2500);
-    if (page.url().includes("/posts/")) return true;
-  }
-
-  const titleHit = page.getByText(snippet, { exact: false }).first();
-  if (await titleHit.isVisible({ timeout: 4000 }).catch(() => false)) {
-    await titleHit.click({ timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(1500);
-    const nearbyLink = page.locator(`a[href*="/blog/posts/"]`).first();
-    if (await nearbyLink.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await nearbyLink.click({ timeout: 10000 }).catch(() => {});
-      await page.waitForTimeout(2000);
-      return page.url().includes("/posts/");
+    const row = page
+      .locator("div")
+      .filter({ hasText: snippet })
+      .filter({ has: page.locator('a[href*="/content/"], a[href*="/blog/posts/"]') })
+      .first();
+    if (await row.isVisible({ timeout: 3000 }).catch(() => false)) {
+      logStep(`Opening post row: ${snippet.slice(0, 40)}`);
+      const contentLink = row.locator('a[href*="/content/"]').first();
+      const postsLink = row.locator('a[href*="/blog/posts/"]').first();
+      if (await contentLink.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await contentLink.click({ timeout: 10000 }).catch(() => {});
+      } else if (await postsLink.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await postsLink.click({ timeout: 10000 }).catch(() => {});
+      } else {
+        const editBtn = row
+          .locator('button:has-text("Edit"), a:has-text("Edit"), button:has-text("Write")')
+          .first();
+        if (await editBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+          await editBtn.click({ timeout: 10000 }).catch(() => {});
+        } else {
+          await row.click({ timeout: 10000 }).catch(() => {});
+        }
+      }
+      await page.waitForTimeout(2500);
+      if (isMailerLitePostEditorUrl(page.url())) return true;
     }
   }
 
-  const editBtn = page
-    .locator(
-      `button:has-text("Edit"), a:has-text("Edit"), [aria-label*="Edit" i]`,
-    )
-    .first();
-  if (await editBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await editBtn.click({ timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(2500);
-    return page.url().includes("/posts/");
+  const titleHit = page.getByText(snippets[0], { exact: false }).first();
+  if (await titleHit.isVisible({ timeout: 4000 }).catch(() => false)) {
+    await titleHit.click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    for (const hrefPart of ["/content/", "/blog/posts/"]) {
+      const nearbyLink = page.locator(`a[href*="${hrefPart}"]`).first();
+      if (await nearbyLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await nearbyLink.click({ timeout: 10000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+        if (isMailerLitePostEditorUrl(page.url())) return true;
+      }
+    }
   }
 
   return false;
@@ -2197,6 +2219,7 @@ async function ensureMailerLitePostShell(page, title, siteId) {
     await clickPostInBlogList(page, title);
     if (
       isPostCreateSuccessUrl(page.url()) ||
+      isMailerLiteContentUrl(page.url()) ||
       (await isBlogEditorOpen(page)) ||
       page.url().includes("/posts/")
     ) {
