@@ -177,9 +177,9 @@ function hasSavedLogin() {
 function sessionJsonMissingOnLinuxError() {
   const err = new Error(
     "Missing storage/blog-2.0/mailerlite-session.json on server. " +
-      "Windows browser-profile does NOT work on Linux. From your PC run: " +
-      'scp "d:\\important files\\Tech2globe\\tech2globe-backend\\storage\\blog-2.0\\mailerlite-session.json" ' +
-      "root@103.174.102.70:/root/t2g_backend/storage/blog-2.0/",
+      "Windows browser-profile does NOT work on Linux. On your PC: npm run blog20:save-session " +
+      "(complete OTP once), then scp storage/blog-2.0/mailerlite-session.json to the server " +
+      "at /root/t2g_backend/storage/blog-2.0/ — or run npm run blog20:save-session on the VPS with xvfb.",
   );
   err.status = 500;
   return err;
@@ -919,13 +919,22 @@ async function waitForMailerLiteOtpAndResolve(page) {
   await captureDebug(page, "awaiting-otp");
 
   const deadline = Date.now() + OTP_WAIT_MS;
+  let lastResendAt = Date.now();
+  const RESEND_MS = 3 * 60 * 1000;
+
+  const finishOtpOk = async (label) => {
+    logStep(label);
+    await settingsModel.clearBotOtpState();
+    await settingsModel.clearMailerLiteSessionAlert();
+    await persistLoginBackup(page.context());
+    logStep("Saved MailerLite session JSON after OTP (fewer prompts on next push)");
+  };
+
   while (Date.now() < deadline) {
     if (!(await isMailerLiteVerificationPage(page))) {
       const stillLogin = await hasVisibleLoginForm(page);
       if (!stillLogin || isOnDashboard(page)) {
-        logStep("MailerLite OTP verification succeeded");
-        await settingsModel.clearBotOtpState();
-        await settingsModel.clearMailerLiteSessionAlert();
+        await finishOtpOk("MailerLite OTP verification succeeded");
         return;
       }
     }
@@ -936,12 +945,14 @@ async function waitForMailerLiteOtpAndResolve(page) {
       await fillMailerLiteOtp(page, code);
       await page.waitForTimeout(2000);
       if (!(await isMailerLiteVerificationPage(page))) {
-        logStep("MailerLite OTP accepted");
-        await settingsModel.clearBotOtpState();
-        await settingsModel.clearMailerLiteSessionAlert();
+        await finishOtpOk("MailerLite OTP accepted");
         return;
       }
-      logStep("OTP not accepted yet — waiting for another code");
+      logStep("OTP not accepted yet — waiting for another code (request a fresh code from MailerLite if expired)");
+    } else if (Date.now() - lastResendAt >= RESEND_MS) {
+      await clickSendEmailCodeIfNeeded(page);
+      lastResendAt = Date.now();
+      logStep("Still waiting for OTP — clicked Send email code again if button was visible");
     }
 
     await page.waitForTimeout(2000);
