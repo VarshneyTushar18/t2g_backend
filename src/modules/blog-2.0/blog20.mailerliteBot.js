@@ -2023,6 +2023,72 @@ async function waitForNewPostTitleInput(page, timeoutMs = 25000) {
   return null;
 }
 
+async function clickMailerLiteCreatePostModalSubmit(page) {
+  const clicked = await page
+    .evaluate(() => {
+      const isVisible = (el) => {
+        if (!el || el.disabled || el.getAttribute("aria-disabled") === "true") return false;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) return false;
+        const style = window.getComputedStyle(el);
+        return style.visibility !== "hidden" && style.display !== "none";
+      };
+      const patterns = [
+        /^create post$/i,
+        /^create$/i,
+        /^save and edit/i,
+        /^save & edit/i,
+        /^continue$/i,
+        /^next$/i,
+      ];
+      const roots = [
+        ...document.querySelectorAll('[role="dialog"]'),
+        ...document.querySelectorAll(".fixed[class*='z-']"),
+        ...document.querySelectorAll('[class*="modal"], [class*="Modal"]'),
+      ];
+      for (const root of roots) {
+        if (!isVisible(root) && root.getAttribute("role") !== "dialog") continue;
+        for (const btn of root.querySelectorAll("button")) {
+          if (!isVisible(btn)) continue;
+          const text = (btn.textContent || "").replace(/\s+/g, " ").trim();
+          if (!text || text.length > 48) continue;
+          if (/create a post/i.test(text)) continue;
+          if (patterns.some((re) => re.test(text))) {
+            btn.click();
+            return `modal:${text}`;
+          }
+        }
+      }
+      return null;
+    })
+    .catch(() => null);
+  if (!clicked) return false;
+  logStep(`Clicked MailerLite create modal via DOM (${clicked})`);
+  await page.waitForTimeout(2800);
+  return true;
+}
+
+async function resolveCreatePostSuccess(page, title, siteId, label = "") {
+  const url = page.url();
+  if (isPostCreateSuccessUrl(url)) {
+    logStep(`Post shell ready${label ? ` (${label})` : ""} at ${url}`);
+    return { ok: true, mode: isMailerLiteContentUrl(url) ? "content-url" : "url" };
+  }
+  if (await findPostOnBlogList(page, title, siteId)) {
+    return { ok: true, mode: "list" };
+  }
+  if (await isBlogEditorOpen(page)) {
+    return { ok: true, mode: "editor" };
+  }
+  if (await clickSetupContinueButton(page)) {
+    await page.waitForTimeout(2000);
+    if (await isBlogEditorOpen(page)) {
+      return { ok: true, mode: "editor-after-save" };
+    }
+  }
+  return null;
+}
+
 async function openNewPostForm(page, siteId) {
   for (const suffix of ["new", "create"]) {
     const path = `/sites/${siteId}/blog/posts/${suffix}`;
@@ -2041,9 +2107,16 @@ async function submitNewPostForm(page, title, siteId = null) {
     return { ok: false, reason: "title-input-missing", url: page.url() };
   }
 
+  const maxTitleLen = 95;
+  let titleForCreate = String(title || "").trim();
+  if (titleForCreate.length > maxTitleLen) {
+    logStep(`Trimming title for MailerLite modal (${titleForCreate.length} → ${maxTitleLen} chars)`);
+    titleForCreate = titleForCreate.slice(0, maxTitleLen).trim();
+  }
+
   await titleInput.click({ timeout: 10000 });
   await titleInput.fill("").catch(() => {});
-  await titleInput.pressSequentially(title, { delay: 35 });
+  await titleInput.pressSequentially(titleForCreate, { delay: 35 });
   await titleInput.dispatchEvent("input");
   await titleInput.dispatchEvent("change");
   await page.waitForTimeout(1200);
@@ -2053,107 +2126,73 @@ async function submitNewPostForm(page, title, siteId = null) {
     return { ok: false, reason: `title-not-filled (${entered.length} chars)` };
   }
 
-  logStep("Submitting new post title (Enter)");
-  await titleInput.press("Enter").catch(() => {});
-  await page.waitForTimeout(2200);
-  let urlAfterEnter = page.url();
-  if (isPostCreateSuccessUrl(urlAfterEnter)) {
-    return { ok: true, mode: "enter-key" };
-  }
-  if (await findPostOnBlogList(page, title, siteId)) {
-    return { ok: true, mode: "list-after-enter" };
-  }
-  if (await isBlogEditorOpen(page)) {
-    return { ok: true, mode: "editor-after-enter" };
-  }
+  const createButtonPattern =
+    /^(create post|create|save and edit|save & edit|continue|next)$/i;
 
-  const scopes = [
-    page.locator('[role="dialog"]'),
-    page.locator('[class*="modal"]'),
-    page.locator("main"),
-    page,
-  ];
-  let createBtn = null;
-  for (const scope of scopes) {
-    if (scope !== page && !(await scope.isVisible({ timeout: 400 }).catch(() => false))) {
-      continue;
+  for (const attempt of [1, 2, 3]) {
+    if (attempt === 2) {
+      logStep("Submitting new post title (Enter)");
+      await titleInput.press("Enter").catch(() => {});
+      await page.waitForTimeout(2200);
+    } else if (attempt === 1) {
+      if (await clickMailerLiteCreatePostModalSubmit(page)) {
+        await waitForPostCreateNavigation(page, 12000).catch(() => {});
+      }
+    } else {
+      logStep("New post modal still open — DOM create retry");
+      await clickMailerLiteCreatePostModalSubmit(page);
+      await page.waitForTimeout(2200);
     }
-    const candidate = scope
-      .locator("button")
-      .filter({
-        hasText: /^(create post|create($|\s)|save and edit|save & edit|continue|next)/i,
-      })
-      .last();
-    if (!(await candidate.isVisible({ timeout: 2000 }).catch(() => false))) continue;
 
-    for (let i = 0; i < 30; i += 1) {
-      if (await candidate.isEnabled().catch(() => false)) break;
-      await page.waitForTimeout(300);
+    let resolved = await resolveCreatePostSuccess(page, title, siteId, `attempt ${attempt}`);
+    if (resolved?.ok) return resolved;
+
+    const dialog = page.locator('[role="dialog"]').first();
+    const modalScope = (await dialog.isVisible({ timeout: 400 }).catch(() => false))
+      ? dialog
+      : page.locator('[class*="modal"]').first();
+
+    let createBtn = null;
+    for (const scope of [modalScope, page.locator("main"), page]) {
+      if (scope !== page && !(await scope.isVisible({ timeout: 400 }).catch(() => false))) {
+        continue;
+      }
+      const candidate = scope
+        .locator("button")
+        .filter({ hasText: createButtonPattern })
+        .first();
+      if (!(await candidate.isVisible({ timeout: 1500 }).catch(() => false))) continue;
+
+      for (let i = 0; i < 30; i += 1) {
+        if (await candidate.isEnabled().catch(() => false)) break;
+        await page.waitForTimeout(300);
+      }
+      if (!(await candidate.isEnabled().catch(() => false))) continue;
+      createBtn = candidate;
+      break;
     }
-    if (!(await candidate.isEnabled().catch(() => false))) continue;
-    createBtn = candidate;
-    break;
-  }
 
-  if (!createBtn) {
-    return { ok: false, reason: "create-button-missing", url: page.url() };
-  }
-
-  logStep("Clicking create/save on new post form");
-  await dismissOverlays(page);
-  await clickLocatorResilient(page, createBtn, {
-    label: "create/save on new post form",
-    timeout: 35000,
-  });
-  const url = await waitForPostCreateNavigation(page, 28000);
-  await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
-  await page.waitForTimeout(1500);
-
-  if (isPostCreateSuccessUrl(url)) {
-    logStep(`Post shell ready at ${url}`);
-    return { ok: true, mode: isMailerLiteContentUrl(url) ? "content-url" : "url" };
-  }
-  if (await findPostOnBlogList(page, title, siteId)) return { ok: true, mode: "list" };
-  if (await isBlogEditorOpen(page)) return { ok: true, mode: "editor" };
-  if (await clickSetupContinueButton(page)) {
-    await page.waitForTimeout(2000);
-    if (await isBlogEditorOpen(page)) return { ok: true, mode: "editor-after-save" };
+    if (createBtn && attempt >= 2) {
+      logStep(`Clicking create/save on new post form (attempt ${attempt})`);
+      await dismissOverlays(page);
+      await clickLocatorResilient(page, createBtn, {
+        label: "create/save on new post form",
+        timeout: 35000,
+      });
+      await waitForPostCreateNavigation(page, 28000);
+      await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+      resolved = await resolveCreatePostSuccess(page, title, siteId, `after click ${attempt}`);
+      if (resolved?.ok) return resolved;
+    }
   }
 
   const finalUrl = page.url();
-  if (isPostCreateSuccessUrl(finalUrl)) {
-    logStep(`Post shell ready (late) at ${finalUrl}`);
-    return { ok: true, mode: isMailerLiteContentUrl(finalUrl) ? "content-url-late" : "url-late" };
-  }
-
-  if (siteId && /\/blog\b/i.test(finalUrl)) {
+  if (siteId) {
+    await goToBlogListNewestFirst(page, siteId);
     if (await findPostOnBlogList(page, title, siteId)) {
-      logStep("Post found on blog list after create (page 1 / newest sort)");
+      logStep("Post found on blog list after create attempts");
       return { ok: true, mode: "list-after-create" };
-    }
-    if (await findNewPostTitleInput(page)) {
-      logStep("New post form still open — retrying create click");
-      await dismissOverlays(page);
-      const retryBtn = page
-        .locator('[role="dialog"] button, [class*="modal"] button')
-        .filter({
-          hasText: /^(create($|\s)|save and edit|save & edit|continue|next)/i,
-        })
-        .last();
-      if (await retryBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await clickLocatorResilient(page, retryBtn, {
-          label: "create/save retry",
-          timeout: 35000,
-        });
-        await page.waitForTimeout(2500);
-        const retryUrl = page.url();
-        if (isPostCreateSuccessUrl(retryUrl)) {
-          return { ok: true, mode: "url-retry" };
-        }
-        if (await findPostOnBlogList(page, title, siteId)) {
-          return { ok: true, mode: "list-retry" };
-        }
-      }
     }
   }
 
@@ -2227,28 +2266,25 @@ async function ensureMailerLitePostShell(page, title, siteId) {
     }
   }
 
-  logStep("Opening new post via /blog/posts/new URL");
-  if (await openNewPostForm(page, siteId)) {
-    let createResult = await submitNewPostForm(page, title, siteId);
-    if (createResult.ok) return createResult;
-    logStep(`Direct new-post URL did not stick (${createResult.reason || "unknown"})`);
-  }
-
-  logStep("Fallback: Create a post button on blog list");
+  logStep("Create a post modal on blog list");
   await goToBlogListNewestFirst(page, siteId);
   const createBtn = await findCreatePostButton(page, { timeout: 25000, click: true });
   if (!createBtn) {
     return { ok: false, reason: "create-button-missing", url: page.url() };
   }
-  await page.waitForTimeout(1500);
-
-  const titleInput = await waitForNewPostTitleInput(page, 25000);
-  if (!titleInput) {
-    return { ok: false, reason: "title-input-missing", url: page.url() };
-  }
+  await page.waitForTimeout(1200);
+  await waitForNewPostTitleInput(page, 25000);
 
   let createResult = await submitNewPostForm(page, title, siteId);
-  if (!createResult.ok && createResult.reason === "no-post-created") {
+  if (createResult.ok) return createResult;
+
+  logStep(`Modal create failed (${createResult.reason || "unknown"}) — trying /blog/posts/new URL`);
+  if (await openNewPostForm(page, siteId)) {
+    createResult = await submitNewPostForm(page, title, siteId);
+    if (createResult.ok) return createResult;
+  }
+
+  if (createResult.reason === "no-post-created") {
     await goToBlogListNewestFirst(page, siteId);
     if (await findPostOnBlogList(page, title, siteId)) {
       await clickPostInBlogList(page, title);
