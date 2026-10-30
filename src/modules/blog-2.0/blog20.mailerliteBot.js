@@ -800,7 +800,12 @@ function buildBlogUrls(siteId) {
 }
 
 function blogListNewestUrl(siteId) {
-  return `https://dashboard.mailerlite.com/sites/${siteId}/blog?sort=-id&page=1`;
+  return blogListPageUrl(siteId, 1);
+}
+
+function blogListPageUrl(siteId, pageNum = 1) {
+  const page = Math.max(1, Number(pageNum) || 1);
+  return `https://dashboard.mailerlite.com/sites/${siteId}/blog?sort=-id&page=${page}`;
 }
 
 function titleSnippets(title) {
@@ -1174,13 +1179,9 @@ async function openBlogList(page, siteId, creds = null) {
   await ensureBlogPostsPage(page, siteId, creds);
 }
 
-async function findPostOnBlogList(page, title, siteId = null) {
+async function findPostOnCurrentBlogListPage(page, title) {
   const snippets = titleSnippets(title);
   if (!snippets.length) return false;
-
-  if (siteId) {
-    await goToBlogListNewestFirst(page, siteId, "blog list page 1 for post lookup");
-  }
 
   for (const snippet of snippets) {
     for (const hrefPart of ["/content/", "/blog/posts/"]) {
@@ -1189,7 +1190,11 @@ async function findPostOnBlogList(page, title, siteId = null) {
         return true;
       }
     }
-    const row = page.locator("div").filter({ hasText: snippet }).first();
+    const row = page
+      .locator("div")
+      .filter({ hasText: snippet })
+      .filter({ has: page.locator('a[href*="/content/"], a[href*="/blog/posts/"], button:has-text("Edit")') })
+      .first();
     if (await row.isVisible({ timeout: 1500 }).catch(() => false)) {
       return true;
     }
@@ -1205,6 +1210,38 @@ async function findPostOnBlogList(page, title, siteId = null) {
     await page.mouse.wheel(0, 700);
     await page.waitForTimeout(600);
   }
+  return false;
+}
+
+async function findPostOnBlogList(page, title, siteId = null) {
+  if (!siteId) {
+    return findPostOnCurrentBlogListPage(page, title);
+  }
+
+  for (let pageNum = 1; pageNum <= 4; pageNum += 1) {
+    await gotoPage(page, blogListPageUrl(siteId, pageNum), `blog list search page ${pageNum}`);
+    await page.waitForTimeout(900);
+    if (await findPostOnCurrentBlogListPage(page, title)) {
+      logStep(`Found post title on blog list page ${pageNum}`);
+      return true;
+    }
+  }
+
+  await gotoPage(page, blogListPageUrl(siteId, 1), "blog list pagination search");
+  await page.waitForTimeout(900);
+  for (let hops = 0; hops < 6; hops += 1) {
+    if (await findPostOnCurrentBlogListPage(page, title)) {
+      logStep(`Found post title via Next pagination (hop ${hops + 1})`);
+      return true;
+    }
+    const nextBtn = page.getByRole("button", { name: /^next$/i }).first();
+    if (!(await nextBtn.isVisible({ timeout: 800 }).catch(() => false))) break;
+    if (!(await nextBtn.isEnabled().catch(() => false))) break;
+    logStep("Searching next blog list page");
+    await nextBtn.click({ timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+  }
+
   return false;
 }
 
@@ -1838,7 +1875,9 @@ async function clickPostInBlogList(page, title) {
 
   for (const snippet of snippets) {
     for (const hrefPart of ["/content/", "/blog/posts/"]) {
-      const postLink = page.locator(`a[href*="${hrefPart}"]`).filter({ hasText: snippet }).first();
+      const matches = page.locator(`a[href*="${hrefPart}"]`).filter({ hasText: snippet });
+      const count = await matches.count().catch(() => 0);
+      const postLink = count > 1 ? matches.last() : matches.first();
       if (await postLink.isVisible({ timeout: 4000 }).catch(() => false)) {
         logStep(`Opening post via ${hrefPart} link: ${snippet.slice(0, 40)}`);
         await postLink.click({ timeout: 10000 }).catch(() => {});
@@ -1851,7 +1890,7 @@ async function clickPostInBlogList(page, title) {
       .locator("div")
       .filter({ hasText: snippet })
       .filter({ has: page.locator('a[href*="/content/"], a[href*="/blog/posts/"]') })
-      .first();
+      .last();
     if (await row.isVisible({ timeout: 3000 }).catch(() => false)) {
       logStep(`Opening post row: ${snippet.slice(0, 40)}`);
       const contentLink = row.locator('a[href*="/content/"]').first();
