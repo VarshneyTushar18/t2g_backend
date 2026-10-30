@@ -793,9 +793,34 @@ async function loginIfNeeded(page, { email, password }) {
 
 function buildBlogUrls(siteId) {
   return [
+    blogListNewestUrl(siteId),
     `https://dashboard.mailerlite.com/sites/${siteId}/blog`,
     `https://dashboard.mailerlite.com/sites/${siteId}`,
   ];
+}
+
+function blogListNewestUrl(siteId) {
+  return `https://dashboard.mailerlite.com/sites/${siteId}/blog?sort=-id`;
+}
+
+async function goToBlogListNewestFirst(page, siteId, label = "blog list (newest first)") {
+  if (!siteId) return;
+  const target = blogListNewestUrl(siteId);
+  const current = page.url();
+  if (current.includes("/blog") && current.includes(String(siteId))) {
+    try {
+      const parsed = new URL(current);
+      const pageNum = Number(parsed.searchParams.get("page") || "1");
+      if (pageNum <= 1 && parsed.searchParams.get("sort") === "-id") {
+        return;
+      }
+    } catch {
+      /* fall through to goto */
+    }
+  }
+  await gotoPage(page, target, label);
+  await page.waitForTimeout(1200);
+  await dismissOverlays(page);
 }
 
 async function getMailerLiteSessionBlockReason(page) {
@@ -1143,9 +1168,13 @@ async function openBlogList(page, siteId, creds = null) {
   await ensureBlogPostsPage(page, siteId, creds);
 }
 
-async function findPostOnBlogList(page, title) {
+async function findPostOnBlogList(page, title, siteId = null) {
   const snippet = String(title || "").trim().slice(0, 48);
   if (!snippet) return false;
+
+  if (siteId) {
+    await goToBlogListNewestFirst(page, siteId, "blog list page 1 for post lookup");
+  }
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const match = page.getByText(snippet, { exact: false }).first();
@@ -1973,7 +2002,7 @@ async function openNewPostForm(page, siteId) {
   return false;
 }
 
-async function submitNewPostForm(page, title) {
+async function submitNewPostForm(page, title, siteId = null) {
   const titleInput =
     (await findNewPostTitleInput(page)) || page.locator('input[type="text"]').first();
   if (!(await titleInput.isVisible({ timeout: 3000 }).catch(() => false))) {
@@ -2038,7 +2067,7 @@ async function submitNewPostForm(page, title) {
     logStep(`Post shell ready at ${url}`);
     return { ok: true, mode: isMailerLiteContentUrl(url) ? "content-url" : "url" };
   }
-  if (await findPostOnBlogList(page, title)) return { ok: true, mode: "list" };
+  if (await findPostOnBlogList(page, title, siteId)) return { ok: true, mode: "list" };
   if (await isBlogEditorOpen(page)) return { ok: true, mode: "editor" };
   if (await clickSetupContinueButton(page)) {
     await page.waitForTimeout(2000);
@@ -2049,6 +2078,37 @@ async function submitNewPostForm(page, title) {
   if (isPostCreateSuccessUrl(finalUrl)) {
     logStep(`Post shell ready (late) at ${finalUrl}`);
     return { ok: true, mode: isMailerLiteContentUrl(finalUrl) ? "content-url-late" : "url-late" };
+  }
+
+  if (siteId && /\/blog\b/i.test(finalUrl)) {
+    if (await findPostOnBlogList(page, title, siteId)) {
+      logStep("Post found on blog list after create (page 1 / newest sort)");
+      return { ok: true, mode: "list-after-create" };
+    }
+    if (await findNewPostTitleInput(page)) {
+      logStep("New post form still open — retrying create click");
+      await dismissOverlays(page);
+      const retryBtn = page
+        .locator('[role="dialog"] button, [class*="modal"] button')
+        .filter({
+          hasText: /^(create($|\s)|save and edit|save & edit|continue|next)/i,
+        })
+        .last();
+      if (await retryBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await clickLocatorResilient(page, retryBtn, {
+          label: "create/save retry",
+          timeout: 35000,
+        });
+        await page.waitForTimeout(2500);
+        const retryUrl = page.url();
+        if (isPostCreateSuccessUrl(retryUrl)) {
+          return { ok: true, mode: "url-retry" };
+        }
+        if (await findPostOnBlogList(page, title, siteId)) {
+          return { ok: true, mode: "list-retry" };
+        }
+      }
+    }
   }
 
   return { ok: false, reason: "no-post-created", url: finalUrl };
@@ -2112,51 +2172,63 @@ async function createBlogDraft(page, draft, siteId, creds = null, options = {}) 
   logStep(`Creating MailerLite post: ${draft.title.slice(0, 80)}`);
   await dismissOverlays(page);
   await openBlogList(page, siteId, creds);
+  await goToBlogListNewestFirst(page, siteId);
 
-  logStep("Clicking Create a post on MailerLite blog");
-  const createBtn = await findCreatePostButton(page, { timeout: 25000, click: true });
-  if (!createBtn) {
-    await captureDebug(page, "create-post-button-missing");
-    const err = new Error(
-      `Create a post button not found (${page.url()}). Check uploads/blog20-bot-debug/.`,
-    );
-    err.status = 500;
-    throw err;
-  }
-  await page.waitForTimeout(1500);
-  logStep(`After Create a post click: ${page.url()}`);
+  if (await findPostOnBlogList(page, draft.title, siteId)) {
+    logStep("Post title already on MailerLite list — opening existing row");
+    await clickPostInBlogList(page, draft.title);
+  } else {
+    logStep("Clicking Create a post on MailerLite blog");
+    const createBtn = await findCreatePostButton(page, { timeout: 25000, click: true });
+    if (!createBtn) {
+      await captureDebug(page, "create-post-button-missing");
+      const err = new Error(
+        `Create a post button not found (${page.url()}). Check uploads/blog20-bot-debug/.`,
+      );
+      err.status = 500;
+      throw err;
+    }
+    await page.waitForTimeout(1500);
+    logStep(`After Create a post click: ${page.url()}`);
 
-  const titleInput = await waitForNewPostTitleInput(page, 25000);
-  if (!titleInput) {
-    await captureDebug(page, "create-title-input-missing");
-    await logVisibleButtons(page, "After-Create-a-post");
-    const err = new Error(
-      `Title input did not appear after Create a post (${page.url()}). Check uploads/blog20-bot-debug/.`,
-    );
-    err.status = 500;
-    throw err;
-  }
+    const titleInput = await waitForNewPostTitleInput(page, 25000);
+    if (!titleInput) {
+      await captureDebug(page, "create-title-input-missing");
+      await logVisibleButtons(page, "After-Create-a-post");
+      const err = new Error(
+        `Title input did not appear after Create a post (${page.url()}). Check uploads/blog20-bot-debug/.`,
+      );
+      err.status = 500;
+      throw err;
+    }
 
-  logStep("Filling new post title in MailerLite");
-  const createResult = await submitNewPostForm(page, draft.title);
-  if (!createResult.ok) {
-    await captureDebug(page, "create-title-stuck");
-    const err = new Error(
-      `MailerLite did not create the post (${createResult.reason || "unknown"} at ${createResult.url || page.url()}).`,
-    );
-    err.status = 500;
-    throw err;
+    logStep("Filling new post title in MailerLite");
+    let createResult = await submitNewPostForm(page, draft.title, siteId);
+    if (!createResult.ok && createResult.reason === "no-post-created") {
+      logStep("Create modal did not navigate — trying direct new-post URL");
+      if (await openNewPostForm(page, siteId)) {
+        createResult = await submitNewPostForm(page, draft.title, siteId);
+      }
+    }
+    if (!createResult.ok) {
+      await captureDebug(page, "create-title-stuck");
+      const err = new Error(
+        `MailerLite did not create the post (${createResult.reason || "unknown"} at ${createResult.url || page.url()}).`,
+      );
+      err.status = 500;
+      throw err;
+    }
+    logStep(`Post created (${createResult.mode || "ok"})`);
+    await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
+    await page
+      .waitForURL(
+        (u) => isPostCreateSuccessUrl(u.toString()) || u.toString().includes("/blog"),
+        { timeout: 20000 },
+      )
+      .catch(() => {});
+    logStep(`Post-create URL: ${page.url()}`);
+    await page.waitForTimeout(2500);
   }
-  logStep(`Post created (${createResult.mode || "ok"})`);
-  await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
-  await page
-    .waitForURL(
-      (u) => isPostCreateSuccessUrl(u.toString()) || u.toString().includes("/blog"),
-      { timeout: 20000 },
-    )
-    .catch(() => {});
-  logStep(`Post-create URL: ${page.url()}`);
-  await page.waitForTimeout(2500);
 
   const onContentSetup = isMailerLiteContentUrl(page.url());
 
@@ -2259,7 +2331,7 @@ async function createBlogDraft(page, draft, siteId, creds = null, options = {}) 
   const contentUrl = isMailerLiteContentUrl(page.url()) ? page.url() : null;
 
   await openBlogList(page, siteId, creds);
-  const foundOnList = await findPostOnBlogList(page, draft.title);
+  const foundOnList = await findPostOnBlogList(page, draft.title, siteId);
   if (!foundOnList) {
     await captureDebug(page, "post-not-on-list-warning");
     logStep(
