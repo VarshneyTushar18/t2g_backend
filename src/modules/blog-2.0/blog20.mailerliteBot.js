@@ -2632,15 +2632,46 @@ export function isMailerLiteBotBusy() {
   return botBusy;
 }
 
+/**
+ * DB flags can outlive the in-memory bot (manual SQL, pm2 restart, kill -9).
+ * Clears ghost OTP UI and orphaned draft "processing" rows when nothing is running.
+ */
+async function reconcileIdleBotWithDatabase() {
+  if (botBusy || currentBotJob) return;
+
+  const settings = await settingsModel.getSettings();
+  const ghostOtp =
+    settings.mailerlite_bot_waiting_otp ||
+    settings.mailerlite_session_status === "awaiting_otp";
+
+  if (ghostOtp) {
+    await settingsModel.clearBotOtpState().catch(() => {});
+    if (settings.mailerlite_session_status === "awaiting_otp") {
+      await settingsModel.clearMailerLiteSessionAlert().catch(() => {});
+    }
+  }
+
+  await draftsModel.failOrphanedProcessingDrafts().catch(() => {});
+}
+
 export async function getMailerLiteBotStatus() {
+  await reconcileIdleBotWithDatabase();
   const settings = await settingsModel.getSettings();
   const job = getBotJobSnapshot();
+  const settingsWaitingOtp = Boolean(settings.mailerlite_bot_waiting_otp);
+  const waiting_otp = botBusy && settingsWaitingOtp;
+  let session_status = settings.mailerlite_session_status || "ok";
+  let session_message = settings.mailerlite_session_message || "";
+  if (!botBusy && session_status === "awaiting_otp") {
+    session_status = "ok";
+    session_message = "";
+  }
   return {
     ok: true,
     bot_busy: botBusy,
-    waiting_otp: Boolean(settings.mailerlite_bot_waiting_otp),
-    session_status: settings.mailerlite_session_status || "ok",
-    session_message: settings.mailerlite_session_message || "",
+    waiting_otp,
+    session_status,
+    session_message,
     login_email_hint: settings.mailerlite_login_email_hint || null,
     runtime_version: BOT_RUNTIME_VERSION,
     job,
@@ -2653,7 +2684,17 @@ export async function forceResetMailerLiteBot() {
   const job = getBotJobSnapshot();
   const draftId = job?.draft_id;
 
-  if (draftId) {
+  if (currentBotJob) {
+    finishBotJob({ ok: false, error: "Cancelled by admin" });
+  }
+  botBusy = false;
+  currentBotJob = null;
+
+  const orphaned = await draftsModel.failOrphanedProcessingDrafts(
+    "Push cancelled — start again and enter OTP from the bot login email when prompted.",
+  );
+
+  if (draftId && orphaned === 0) {
     await draftsModel.updateDraftPushStatus(draftId, {
       mailerlite_push_status: "failed",
       mailerlite_push_error:
@@ -2663,26 +2704,15 @@ export async function forceResetMailerLiteBot() {
   }
 
   await settingsModel.clearBotOtpState().catch(() => {});
-  await settingsModel
-    .setMailerLiteSessionAlert({
-      status: "needed",
-      message:
-        "Session reset. Push again and enter the OTP from the bot login email when prompted.",
-    })
-    .catch(() => {});
-
-  if (currentBotJob) {
-    finishBotJob({ ok: false, error: "Cancelled by admin" });
-  }
-  botBusy = false;
-  currentBotJob = null;
+  await settingsModel.clearMailerLiteSessionAlert().catch(() => {});
 
   logStep("Bot state force-reset by admin");
   return {
     ok: true,
     message:
-      "Stuck push cleared. Submit a fresh OTP on the next push (check the bot login inbox, not your personal MailerLite tab).",
+      "Bot stopped and draft unlocked. Use Retry push when ready (OTP only appears while the bot is running).",
     draft_id: draftId || null,
+    drafts_cleared: orphaned,
   };
 }
 

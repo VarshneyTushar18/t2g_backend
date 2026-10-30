@@ -97,6 +97,10 @@ export async function updateDraftPushStatus(id, patch) {
     sets.push("mailerlite_push_error = ?");
     vals.push(patch.mailerlite_push_error);
   }
+  if (patch.mailerlite_push_step !== undefined) {
+    sets.push("mailerlite_push_step = ?");
+    vals.push(patch.mailerlite_push_step);
+  }
   vals.push(id);
   await blogDb.query(
     `UPDATE blog_2_0_drafts SET ${sets.join(", ")} WHERE id = ?`,
@@ -194,6 +198,22 @@ export async function deleteDraftsByIds(ids = []) {
     notFound,
     onMailerLite,
   };
+}
+
+/** When the bot is idle but DB still says processing (manual stop, crash, pm2 restart). */
+export async function failOrphanedProcessingDrafts(
+  message = "Push stopped — bot is not running. Use Retry push.",
+) {
+  const [result] = await blogDb.query(
+    `UPDATE blog_2_0_drafts
+     SET mailerlite_push_status = 'failed',
+         mailerlite_push_error = ?,
+         mailerlite_push_step = 'Stopped',
+         updated_at = CURRENT_TIMESTAMP
+     WHERE mailerlite_push_status = 'processing'`,
+    [String(message).slice(0, 2000)],
+  );
+  return result.affectedRows ?? 0;
 }
 
 export async function listDrafts({ limit = 20 } = {}) {
