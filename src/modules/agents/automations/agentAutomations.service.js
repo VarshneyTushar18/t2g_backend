@@ -3,6 +3,19 @@ import * as blogAgentModel from "../blog/blogAgent.model.js";
 import { runBlogAgent } from "../blog/blogAgent.service.js";
 import * as blogModel from "../../blog/blog.model.js";
 import { transporter, getSmtpFromAddress } from "../../../utils/email.service.js";
+import {
+  requestBlogPublishApproval,
+  sendTestApprovalEmail,
+} from "./blogApproval.service.js";
+import { DEFAULT_BLOG_AUTOMATION_MEMORY } from "../blog/blogAgentAutomationMemory.js";
+import { discoverTrendingTopics } from "./trendingTopicDiscovery.js";
+import {
+  shouldRunNow as checkScheduleDue,
+  describeScheduleStatus,
+  sleep,
+} from "./agentAutomations.scheduleUtils.js";
+
+export { describeScheduleStatus };
 
 function parseEmails(value) {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -12,7 +25,13 @@ function parseEmails(value) {
     .filter(Boolean);
 }
 
-function parseBlogCreation(resultText) {
+function parseBlogCreation(resultText, posts = []) {
+  if (Array.isArray(posts) && posts[0]?.id) {
+    return {
+      postId: Number(posts[0].id),
+      slug: posts[0].slug || null,
+    };
+  }
   const text = String(resultText || "");
   const idMatch = text.match(/\b(?:id|post id)\D{0,6}(\d{1,10})\b/i);
   const slugMatch = text.match(/\/blogs\/([a-z0-9-]+)/i);
@@ -22,135 +41,87 @@ function parseBlogCreation(resultText) {
   };
 }
 
-function shouldRunNow(settings) {
-  if (!settings.enabled) return false;
+const STALE_PROCESSING_MINUTES = Number(
+  process.env.AGENT_AUTOMATIONS_STALE_PROCESSING_MIN || 50,
+);
 
-  const now = new Date();
-  if (settings.window_start && now < new Date(settings.window_start)) return false;
-  if (settings.window_end && now > new Date(settings.window_end)) return false;
-
-  const runDays = Array.isArray(settings.run_days) ? settings.run_days : [];
-  if (runDays.length && !runDays.includes(now.getDay())) return false;
-
-  const [hour, minute] = String(settings.run_time || "10:00")
-    .split(":")
-    .map((n) => Number(n));
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const runMinutes = (Number(hour) || 0) * 60 + (Number(minute) || 0);
-  if (nowMinutes < runMinutes || nowMinutes > runMinutes + 4) return false;
-
-  if (settings.last_run_at) {
-    const last = new Date(settings.last_run_at);
-    if (
-      last.getFullYear() === now.getFullYear() &&
-      last.getMonth() === now.getMonth() &&
-      last.getDate() === now.getDate()
-    ) {
-      return false;
-    }
+async function recoverStaleProcessingTopics() {
+  const n = await automationModel.releaseStaleProcessingTopics(STALE_PROCESSING_MINUTES);
+  if (n > 0) {
+    console.warn(`[agent-automations] released ${n} stale processing topic(s)`);
   }
-  return true;
 }
 
 function buildPrompt(topic, status) {
   const tags = (topic.tags || []).join(", ");
-  const categories = (topic.category_ids || []).join(", ");
+  const categoryIds = (topic.category_ids || []).map(Number).filter(Boolean);
   const author = topic.author_name || "Tech2Globe Digital Team";
   return [
     `Create a complete SEO blog post on topic: "${topic.topic}"`,
     `Set status to ${status}.`,
     `Author name: ${author}.`,
     tags ? `Use tags: ${tags}.` : "",
-    categories ? `Use category IDs: ${categories}.` : "",
+    categoryIds.length
+      ? `Mandatory categoryIds in create_blog_post: [${categoryIds.join(", ")}].`
+      : "If no categories were set on the topic, pick the best matching blog category id from Tech2Globe site context.",
     topic.notes ? `Extra instructions: ${topic.notes}` : "",
-    "Mandatory: call create_blog_post tool and then clearly mention created id and public url in final response.",
+    "IMPORTANT: Skip clarifying questions. Just write it now — do not ask the user anything.",
+    "Slug: derive from final title (lowercase, hyphens). Pass slug, metaTitle, metaDescription, focusKeyword in create_blog_post.",
+    "Featured image: leave featured_image empty in create_blog_post — the tool auto-picks stock cover. Do NOT call pick_blog_image unless create failed without image.",
+    "Use add_inline_images: true. One create_blog_post call with full HTML/Markdown body (~900–1200 words).",
+    "Mandatory: call create_blog_post once, then reply with id: {number} and url: https://www.tech2globe.com/blogs/{slug}.",
+    "Follow the admin content mix setting from system instructions (humanize % vs AI %). Clear H2s, short paragraphs, no raw markdown asterisks.",
+    DEFAULT_BLOG_AUTOMATION_MEMORY,
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-async function sendPreviewEmail({ post, topic, settings }) {
+/** Notify-only email for auto_publish mode (already live). */
+async function sendPublishedNotifyEmail({ post, topic, settings }) {
   const recipients = parseEmails(settings.approval_emails);
   if (!recipients.length) {
-    console.warn("[agent-automations] No sample emails configured — skipping preview mail");
     return { sent: false, reason: "no_recipients" };
   }
   const from = getSmtpFromAddress();
   if (!from) {
-    console.warn("[agent-automations] SMTP from address missing — skipping preview mail");
     return { sent: false, reason: "no_from_address" };
   }
 
-  const adminBase =
-    process.env.CLIENT_URL_ADMIN || "https://manageadmin.tech2globe.tech";
-  const editUrl = `${adminBase.replace(/\/$/, "")}/admin/blog/edit/${post.id}`;
   const webUrl = `https://www.tech2globe.com/blogs/${post.slug}`;
-
   await transporter.sendMail({
-    from,
+    from: `"Tech2Globe Blog Automations" <${from}>`,
     to: recipients.join(", "),
-    subject: `[Agent Automations] Blog sample ready: ${post.title}`,
+    subject: `[Published] Blog live: ${post.title}`,
     html: `
       <div style="font-family:Arial,sans-serif;line-height:1.5;max-width:640px;">
-        <h2 style="color:#1e40af;">Agent Automations — blog sample</h2>
-        <p>A new blog was generated automatically. Please review before publishing.</p>
+        <h2 style="color:#15803d;">Blog auto-published</h2>
+        <p>Automation published a new post (mode: auto publish).</p>
         <p><strong>Topic:</strong> ${topic.topic}</p>
         <p><strong>Title:</strong> ${post.title}</p>
-        <p><strong>Status:</strong> ${post.status}</p>
-        <p><strong>Author:</strong> ${post.author}</p>
-        <p style="background:#f8fafc;padding:12px;border-radius:8px;">${post.excerpt || ""}</p>
-        <p>
-          <a href="${editUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;">Review in Admin</a>
-        </p>
-        <p style="font-size:13px;color:#64748b;">
-          Public URL (live after publish): <a href="${webUrl}">${webUrl}</a>
-        </p>
+        <p><a href="${webUrl}">${webUrl}</a></p>
       </div>
     `,
   });
-  console.log(`[agent-automations] Sample email sent to: ${recipients.join(", ")}`);
   return { sent: true, recipients };
 }
 
 export async function sendTestSampleEmail(recipientsInput) {
-  const recipients = parseEmails(recipientsInput);
-  if (!recipients.length) {
-    const err = new Error("No sample blog email configured");
-    err.status = 400;
-    throw err;
-  }
-  const from = getSmtpFromAddress();
-  if (!from) {
-    const err = new Error("SMTP from address not configured on server");
-    err.status = 503;
-    throw err;
-  }
-
-  const adminBase =
-    process.env.CLIENT_URL_ADMIN || "https://manageadmin.tech2globe.tech";
-
-  await transporter.sendMail({
-    from,
-    to: recipients.join(", "),
-    subject: "[Agent Automations] Test — blog sample email",
-    html: `
-      <div style="font-family:Arial,sans-serif;line-height:1.5;max-width:640px;">
-        <h2 style="color:#1e40af;">Agent Automations test email</h2>
-        <p>This is a test message. When automation runs, blog samples will be sent to this address.</p>
-        <p><strong>Configured recipient(s):</strong> ${recipients.join(", ")}</p>
-        <p>
-          <a href="${adminBase.replace(/\/$/, "")}/admin/blog/agent-automations">Open Agent Automations</a>
-        </p>
-      </div>
-    `,
-  });
-  return { sent: true, recipients };
+  // Career-style Yes/No + preview test email
+  return sendTestApprovalEmail(recipientsInput);
 }
 
 async function processTopic(topic, settings) {
   await automationModel.markTopicProcessing(topic.id);
 
-  const desiredStatus = settings.mode === "auto_publish" ? "publish" : "pending";
+  // pending_email → pending (await Yes/No)
+  // draft_only → draft (no email)
+  // auto_publish → publish immediately
+  let desiredStatus = "pending";
+  if (settings.mode === "auto_publish") desiredStatus = "publish";
+  else if (settings.mode === "draft_only") desiredStatus = "draft";
+  else desiredStatus = "pending";
+
   const prompt = buildPrompt(topic, desiredStatus);
 
   const user = {
@@ -173,15 +144,24 @@ async function processTopic(topic, settings) {
     content: prompt,
   });
 
-  const runResult = await runBlogAgent({ user, threadId: thread.id, message: prompt });
+  const runResult = await runBlogAgent({
+    user,
+    threadId: thread.id,
+    message: prompt,
+    automationMode: true,
+  });
   await blogAgentModel.addMessage({
     threadId: thread.id,
     role: "assistant",
     content: String(runResult.output || "Done."),
-    toolOutput: { durationMs: runResult.durationMs || null, source: "agent-automations" },
+    toolOutput: {
+      durationMs: runResult.durationMs || null,
+      source: "agent-automations",
+      posts: runResult.posts || [],
+    },
   });
 
-  const parsed = parseBlogCreation(runResult.output);
+  const parsed = parseBlogCreation(runResult.output, runResult.posts);
   if (!parsed.postId) {
     throw new Error("Could not detect created post id from agent output.");
   }
@@ -196,52 +176,229 @@ async function processTopic(topic, settings) {
     generated_title: post.title,
   });
 
-  if (settings.mode !== "draft_only") {
-    await sendPreviewEmail({ post, topic, settings });
+  let approval = null;
+  if (settings.mode === "pending_email") {
+    approval = await requestBlogPublishApproval({
+      post,
+      topic,
+      approvalEmails: settings.approval_emails,
+      requestedBy: "agent-automations",
+      requesterEmail: "agent-automations@system.local",
+    });
+  } else if (settings.mode === "auto_publish") {
+    await sendPublishedNotifyEmail({ post, topic, settings });
+  }
+  // draft_only: no email
+
+  return {
+    topicId: topic.id,
+    postId: post.id,
+    title: post.title,
+    status: post.status,
+    approvalId: approval?.approvalId || null,
+  };
+}
+
+async function ensureTopicsForRun(settings) {
+  const limit = settings.posts_per_run || 1;
+  if (settings.topic_source !== "auto_trending") {
+    return { autoGenerated: [] };
   }
 
-  return { topicId: topic.id, postId: post.id, title: post.title, status: post.status };
+  const queued = await automationModel.countQueuedTopics();
+  const need = Math.max(0, limit - queued);
+  if (!need) return { autoGenerated: [] };
+
+  const avoidTopics = await automationModel.listRecentTopicTitles(50);
+  const picks = await discoverTrendingTopics({
+    count: need,
+    niche: settings.auto_niche,
+    avoidTopics,
+  });
+
+  const created = [];
+  for (const pick of picks) {
+    const topic = await automationModel.createTopic({
+      topic: pick.topic,
+      notes: pick.notes
+        ? `[Auto trending]\n${pick.notes}`
+        : "[Auto trending] Researched from news and search trends.",
+      author_name: settings.auto_default_author_name || "Tech2Globe Digital Team",
+      category_ids: settings.auto_default_category_ids || [],
+      tags: pick.tags?.length ? pick.tags : settings.auto_default_tags || [],
+      priority: 10,
+      created_by: "auto-trending",
+    });
+    created.push(topic);
+  }
+
+  console.log(
+    `[agent-automations] auto-trending queued ${created.length} topic(s): ${created.map((t) => t.topic).join(" | ")}`,
+  );
+  return { autoGenerated: created };
+}
+
+async function processTopicBatch(settings, dueTopics) {
+  const staggerSec = Math.min(
+    Math.max(Number(settings.posts_stagger_seconds || 120), 0),
+    900,
+  );
+  const results = [];
+  for (let i = 0; i < dueTopics.length; i += 1) {
+    const topic = dueTopics[i];
+    if (i > 0 && staggerSec > 0) {
+      console.log(
+        `[agent-automations] stagger ${staggerSec}s before topic #${topic.id}`,
+      );
+      await sleep(staggerSec * 1000);
+    }
+    const started = Date.now();
+    try {
+      const out = await processTopic(topic, settings);
+      results.push({
+        ok: true,
+        ...out,
+        durationMs: Date.now() - started,
+      });
+    } catch (err) {
+      await automationModel.markTopicFailed(topic.id, err.message);
+      results.push({
+        ok: false,
+        topicId: topic.id,
+        error: err.message,
+        durationMs: Date.now() - started,
+      });
+    }
+  }
+  return results;
 }
 
 export async function runAutomationTick() {
+  await recoverStaleProcessingTopics();
+
   const settings = await automationModel.getSettings();
-  if (!shouldRunNow(settings)) {
-    return { ran: false, reason: "Not in configured schedule window" };
+  const schedule = checkScheduleDue(settings);
+  if (!schedule.ok) {
+    return { ran: false, reason: schedule.reason || "Not in schedule window" };
+  }
+
+  let autoMeta = { autoGenerated: [] };
+  try {
+    autoMeta = await ensureTopicsForRun(settings);
+  } catch (err) {
+    console.error("[agent-automations] auto trending failed:", err.message);
+    return {
+      ran: true,
+      processed: 0,
+      results: [],
+      autoTrendingError: err.message,
+    };
   }
 
   const dueTopics = await automationModel.getDueTopics(settings.posts_per_run || 1);
   if (!dueTopics.length) {
-    await automationModel.markSettingsLastRun(new Date());
-    return { ran: true, processed: 0, results: [] };
+    return {
+      ran: true,
+      processed: 0,
+      results: [],
+      autoGeneratedTopics: autoMeta.autoGenerated.map((t) => ({
+        id: t.id,
+        topic: t.topic,
+      })),
+    };
   }
 
-  const results = [];
-  for (const topic of dueTopics) {
-    try {
-      const out = await processTopic(topic, settings);
-      results.push({ ok: true, ...out });
-    } catch (err) {
-      await automationModel.markTopicFailed(topic.id, err.message);
-      results.push({ ok: false, topicId: topic.id, error: err.message });
-    }
-  }
+  const results = await processTopicBatch(settings, dueTopics);
 
   await automationModel.markSettingsLastRun(new Date());
-  return { ran: true, processed: dueTopics.length, results };
+  return {
+    ran: true,
+    processed: dueTopics.length,
+    results,
+    autoGeneratedTopics: autoMeta.autoGenerated.map((t) => ({
+      id: t.id,
+      topic: t.topic,
+    })),
+  };
 }
 
-export async function runAutomationNow() {
-  const settings = await automationModel.getSettings();
-  const dueTopics = await automationModel.getDueTopics(settings.posts_per_run || 1);
-  const results = [];
-  for (const topic of dueTopics) {
-    try {
-      const out = await processTopic(topic, settings);
-      results.push({ ok: true, ...out });
-    } catch (err) {
-      await automationModel.markTopicFailed(topic.id, err.message);
-      results.push({ ok: false, topicId: topic.id, error: err.message });
+async function bootstrapTopicsIfNeeded(settings, { force = false } = {}) {
+  const useAuto =
+    settings.topic_source === "auto_trending" || force;
+  if (!useAuto) {
+    const queued = await automationModel.countQueuedTopics();
+    if (!queued) {
+      return {
+        autoGenerated: [],
+        noQueuedTopics: true,
+        message:
+          "No topics waiting. Add a topic in the list, or enable Auto find trending topics and Save.",
+      };
     }
+    return { autoGenerated: [] };
   }
-  return { processed: dueTopics.length, results };
+
+  try {
+    const meta = await ensureTopicsForRun(settings);
+    const stillEmpty = await automationModel.countQueuedTopics();
+    if (!stillEmpty && !meta.autoGenerated.length) {
+      return {
+        ...meta,
+        noQueuedTopics: true,
+        message:
+          "No topics in queue. Add a topic manually or check failed rows and click Retry.",
+      };
+    }
+    return meta;
+  } catch (err) {
+    return {
+      autoGenerated: [],
+      autoTrendingError: err.message,
+    };
+  }
+}
+
+export async function runAutomationNow(options = {}) {
+  await recoverStaleProcessingTopics();
+
+  const settings = await automationModel.getSettings();
+  const bootstrapTrending = Boolean(options.bootstrapTrending);
+
+  const autoMeta = await bootstrapTopicsIfNeeded(settings, {
+    force: bootstrapTrending,
+  });
+
+  if (autoMeta.autoTrendingError) {
+    return {
+      processed: 0,
+      results: [],
+      autoTrendingError: autoMeta.autoTrendingError,
+    };
+  }
+
+  const dueTopics = await automationModel.getDueTopics(settings.posts_per_run || 1);
+  if (!dueTopics.length) {
+    return {
+      processed: 0,
+      results: [],
+      autoGeneratedTopics: (autoMeta.autoGenerated || []).map((t) => ({
+        id: t.id,
+        topic: t.topic,
+      })),
+      noQueuedTopics: true,
+      message:
+        autoMeta.message ||
+        "Nothing to write. Add a topic, enable auto trending + Save, or Retry a failed topic.",
+    };
+  }
+
+  const results = await processTopicBatch(settings, dueTopics);
+  return {
+    processed: dueTopics.length,
+    results,
+    autoGeneratedTopics: (autoMeta.autoGenerated || []).map((t) => ({
+      id: t.id,
+      topic: t.topic,
+    })),
+  };
 }

@@ -1,5 +1,7 @@
 import * as approvalModel from "./careerApproval.model.js";
 import * as approvalService from "./careerApproval.service.js";
+import { handlePublishIntakeSubmit } from "./careerApproval.schedule.service.js";
+import { verifyCareerLinkToken } from "./careerApproval.email.js";
 
 function handleError(res, err, fallback) {
   console.error(fallback, err);
@@ -16,7 +18,7 @@ function parseEmailList(value) {
     .filter(Boolean);
 }
 
-/** Public: GET /api/career/approvals/go?token=... */
+/** Public: GET/POST /api/career/approvals/go?token=... */
 export async function go(req, res) {
   try {
     const token = req.query.token || req.body?.token;
@@ -26,6 +28,35 @@ export async function go(req, res) {
         .type("html")
         .send("<h1>Missing token</h1><p>Open the link from your email.</p>");
     }
+
+    if (req.method === "POST") {
+      try {
+        const payload = verifyCareerLinkToken(token);
+        if (
+          payload.typ === "career_schedule_gate" &&
+          payload.act === "intake_form"
+        ) {
+          const result = await handlePublishIntakeSubmit({
+            token,
+            title_hint: req.body?.title_hint,
+            comment: req.body?.comment,
+            actorEmail: req.query.email || null,
+          });
+          return res.status(result.status).type("html").send(result.html);
+        }
+      } catch {
+        /* fall through to remove-by-number */
+      }
+
+      const result = await approvalService.removeLiveJobByListNumber({
+        token,
+        number: req.body?.number ?? req.query?.number,
+        removeComment: req.body?.remove_comment,
+        actorEmail: req.query.email || null,
+      });
+      return res.status(result.status).type("html").send(result.html);
+    }
+
     const result = await approvalService.handleSignedAction({
       token,
       actorEmail: req.query.email || null,
@@ -83,6 +114,17 @@ export async function saveSettings(req, res) {
         reminder_hours: body.reminder_hours,
         max_reminders: body.max_reminders,
         expiry_hours: body.expiry_hours,
+        schedule_enabled: body.schedule_enabled,
+        schedule_frequency: body.schedule_frequency,
+        schedule_every_n: body.schedule_every_n,
+        schedule_weekday: body.schedule_weekday,
+        schedule_time_local: body.schedule_time_local,
+        schedule_gate_expiry_hours: body.schedule_gate_expiry_hours,
+        schedule_agent_prompt: body.schedule_agent_prompt,
+        schedule_mode: body.schedule_mode,
+        schedule_run_days: Array.isArray(body.schedule_run_days)
+          ? body.schedule_run_days
+          : undefined,
       },
       req.user?.email || req.user?.sub || null,
     );
@@ -99,6 +141,15 @@ export async function testEmail(req, res) {
     res.json({ ok: true, ...result });
   } catch (err) {
     handleError(res, err, "Failed to send test email");
+  }
+}
+
+export async function testScheduleEmail(req, res) {
+  try {
+    const result = await approvalService.sendTestScheduleGateEmail();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    handleError(res, err, "Failed to send test schedule email");
   }
 }
 

@@ -1,7 +1,10 @@
 import * as model from "../blog/blogAgent.model.js";
 import * as service from "./blogImage.service.js";
 import { refreshConfiguredFlag, getDefaultModel } from "../lib/openai.js";
-import { isCloudinaryConfigured, IMAGE_MODEL } from "./blogImage.generate.js";
+import {
+  IMAGE_MODEL,
+  getImageGenerationStatus,
+} from "./blogImage.generate.js";
 
 function userId(req) {
   return req.user?.sub || req.user?.id;
@@ -13,14 +16,27 @@ function handleError(res, err, fallback) {
 }
 
 export async function getStatus(_req, res) {
-  const configured = await refreshConfiguredFlag();
-  res.json({
-    configured,
-    cloudinary: isCloudinaryConfigured(),
-    agent: "blog-image",
-    name: "Blog Image Agent",
-    model: getDefaultModel() || IMAGE_MODEL,
-  });
+  try {
+    await refreshConfiguredFlag();
+    const image = await getImageGenerationStatus();
+    res.json({
+      configured: image.ready,
+      cloudinary: image.cloudinary,
+      agent: "blog-image",
+      name: "Blog Image Agent",
+      model: image.imageModel || IMAGE_MODEL,
+      chatModel: getDefaultModel() || "",
+      hasImageApiKey: image.hasImageApiKey,
+      imageBaseURL: image.imageBaseURL,
+      imageKeySource: image.imageKeySource,
+      alerts: image.alerts,
+      setupPath: "/admin/connect/ai",
+      setupHint:
+        "Configure a separate Image model (+ optional Image API key) in Connect → AI Integrations. This agent only generates images — it does not create blogs.",
+    });
+  } catch (err) {
+    handleError(res, err, "Failed to get image agent status");
+  }
 }
 
 export async function listThreads(req, res) {
