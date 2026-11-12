@@ -95,7 +95,8 @@ export async function goApproval(req, res) {
     }
     const result = await handleSignedAction({
       token,
-      actorEmail: req.query.email || null,
+      actorEmail: req.query.email || req.body?.email || null,
+      method: req.method,
     });
     res.status(result.status).type("html").send(result.html);
   } catch (err) {

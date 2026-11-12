@@ -310,7 +310,8 @@ export async function goBlog20Approval(req, res) {
     }
     const result = await handleBlog20SignedAction({
       token,
-      actorEmail: req.query.email || null,
+      actorEmail: req.query.email || req.body?.email || null,
+      method: req.method,
     });
     res.status(result.status).type("html").send(result.html);
   } catch (err) {

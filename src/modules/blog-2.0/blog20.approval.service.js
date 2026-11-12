@@ -4,13 +4,18 @@ import * as settingsModel from "./blog20.model.js";
 import { pushDraftToMailerLite } from "./blog20.mailerliteBot.js";
 import {
   buildBlog20ApprovalRequestEmail,
+  buildBlog20AutomationSwitchNoticeEmail,
+  buildBlog20AutomationSwitchUrls,
   buildBlog20DecisionConfirmationEmail,
   buildBlog20DecisionUrls,
   getPublicApiBase,
+  renderBlog20AutomationSwitchConfirmPage,
+  renderBlog20AutomationSwitchDonePage,
   renderBlog20DecisionPage,
   renderBlog20PreviewPage,
   sendHtmlEmail,
   verifyBlog20ApprovalToken,
+  verifyBlog20AutomationSwitchToken,
 } from "./blog20.approval.email.js";
 
 function parseEmails(value) {
@@ -218,7 +223,54 @@ export async function requestBlog20DraftApproval({
   };
 }
 
-export async function handleBlog20SignedAction({ token, actorEmail = null }) {
+async function applyBlog20AutomationSwitch({ token, action, method }) {
+  const urls = buildBlog20AutomationSwitchUrls();
+  if (String(method || "GET").toUpperCase() !== "POST") {
+    return {
+      ok: true,
+      status: 200,
+      html: renderBlog20AutomationSwitchConfirmPage({ action, token }),
+    };
+  }
+
+  const enabled = action === "resume";
+  await settingsModel.upsertAutomationSettings(
+    { automation_enabled: enabled },
+    "email-switch",
+  );
+  const otherUrl = enabled ? urls.pauseUrl : urls.resumeUrl;
+  const settings = await settingsModel.getSettings();
+  const recipients = parseEmails(settings.approval_emails);
+  if (recipients.length) {
+    const mail = buildBlog20AutomationSwitchNoticeEmail({ enabled, otherUrl });
+    try {
+      await sendHtmlEmail({
+        to: recipients,
+        subject: mail.subject,
+        html: mail.html,
+      });
+    } catch (err) {
+      console.error("[blog20-approval] automation switch email failed:", err.message);
+    }
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    html: renderBlog20AutomationSwitchDonePage({ enabled, otherUrl }),
+  };
+}
+
+export async function handleBlog20SignedAction({ token, actorEmail = null, method = "GET" }) {
+  const switchPayload = verifyBlog20AutomationSwitchToken(token);
+  if (switchPayload) {
+    return applyBlog20AutomationSwitch({
+      token,
+      action: switchPayload.act,
+      method,
+    });
+  }
+
   let payload;
   try {
     payload = verifyBlog20ApprovalToken(token);

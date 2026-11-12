@@ -1,14 +1,20 @@
 import * as approvalModel from "./blogApproval.model.js";
+import * as automationModel from "./agentAutomations.model.js";
 import * as blogModel from "../../blog/blog.model.js";
 import {
   buildApprovalRequestEmail,
+  buildAutomationSwitchNoticeEmail,
+  buildAutomationSwitchUrls,
   buildDecisionConfirmationEmail,
   buildDecisionUrls,
   getPublicApiBase,
+  renderAutomationSwitchConfirmPage,
+  renderAutomationSwitchDonePage,
   renderDecisionPage,
   renderPreviewPage,
   sendHtmlEmail,
   verifyApprovalToken,
+  verifyAutomationSwitchToken,
 } from "./blogApproval.email.js";
 
 function parseEmails(value) {
@@ -151,7 +157,51 @@ export async function requestBlogPublishApproval({
   };
 }
 
-export async function handleSignedAction({ token, actorEmail = null }) {
+async function applyAutomationSwitch({ token, action, method }) {
+  const urls = buildAutomationSwitchUrls();
+  if (String(method || "GET").toUpperCase() !== "POST") {
+    return {
+      ok: true,
+      status: 200,
+      html: renderAutomationSwitchConfirmPage({ action, token }),
+    };
+  }
+
+  const enabled = action === "resume";
+  await automationModel.upsertSettings({ enabled });
+  const otherUrl = enabled ? urls.pauseUrl : urls.resumeUrl;
+  const settings = await automationModel.getSettings();
+  const recipients = parseEmails(settings.approval_emails);
+  if (recipients.length) {
+    const mail = buildAutomationSwitchNoticeEmail({ enabled, otherUrl });
+    try {
+      await sendHtmlEmail({
+        to: recipients,
+        subject: mail.subject,
+        html: mail.html,
+      });
+    } catch (err) {
+      console.error("[blog-approval] automation switch email failed:", err.message);
+    }
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    html: renderAutomationSwitchDonePage({ enabled, otherUrl }),
+  };
+}
+
+export async function handleSignedAction({ token, actorEmail = null, method = "GET" }) {
+  const switchPayload = verifyAutomationSwitchToken(token);
+  if (switchPayload) {
+    return applyAutomationSwitch({
+      token,
+      action: switchPayload.act,
+      method,
+    });
+  }
+
   let payload;
   try {
     payload = verifyApprovalToken(token);

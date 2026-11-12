@@ -51,6 +51,148 @@ export function verifyBlog20ApprovalToken(token) {
   return payload;
 }
 
+const SWITCH_TTL_SEC = 180 * 24 * 60 * 60;
+
+export function signBlog20AutomationSwitchToken(action) {
+  return jwt.sign(
+    { act: action, typ: "blog20_automation_switch" },
+    approvalSecret(),
+    { expiresIn: SWITCH_TTL_SEC },
+  );
+}
+
+/** @returns {object|null} pause/resume payload, or null when this is not a switch link */
+export function verifyBlog20AutomationSwitchToken(token) {
+  try {
+    const payload = jwt.verify(String(token || ""), approvalSecret());
+    if (payload?.typ !== "blog20_automation_switch") return null;
+    if (payload.act !== "pause" && payload.act !== "resume") return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+export function buildBlog20AutomationSwitchUrls() {
+  const base = getPublicApiBase();
+  if (!base) return { pauseUrl: null, resumeUrl: null, postUrl: null };
+  const root = `${base}/api/blog-2.0/approvals/go`;
+  const pause = signBlog20AutomationSwitchToken("pause");
+  const resume = signBlog20AutomationSwitchToken("resume");
+  return {
+    pauseUrl: `${root}?token=${encodeURIComponent(pause)}`,
+    resumeUrl: `${root}?token=${encodeURIComponent(resume)}`,
+    postUrl: root,
+  };
+}
+
+function automationSwitchBlock() {
+  const { pauseUrl, resumeUrl } = buildBlog20AutomationSwitchUrls();
+  if (!pauseUrl || !resumeUrl) return "";
+  const btn =
+    "display:inline-block;background:#ffffff;color:#0f172a;text-decoration:none;padding:10px 16px;border-radius:10px;font-weight:700;border:1px solid #cbd5e1;";
+  return `
+    <p style="margin:22px 0 8px;font-size:15px;"><strong>Future blogs</strong></p>
+    <p style="margin:0 0 12px;font-size:13px;color:#475569;line-height:1.5;">
+      Turn the Bright CRM schedule off or on. This does not approve or reject the blog above.
+      These links stay valid for 6 months, so you can turn it back on from this email.
+    </p>
+    <p style="margin:0 0 8px;">
+      <a href="${pauseUrl}" style="${btn}">Turn automations off</a>
+    </p>
+    <p style="margin:0;">
+      <a href="${resumeUrl}" style="${btn}">Turn automations on</a>
+    </p>
+  `;
+}
+
+export function renderBlog20AutomationSwitchConfirmPage({ action, token }) {
+  const turningOff = action === "pause";
+  const { postUrl } = buildBlog20AutomationSwitchUrls();
+  const headline = turningOff ? "Turn automations off?" : "Turn automations on?";
+  const detail = turningOff
+    ? "No new Bright CRM blog emails will be sent until you turn automations back on. This blog’s Preview and Save as draft links still work."
+    : "New Bright CRM blogs will be written and emailed again on the usual schedule.";
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(headline)}</title>
+</head>
+<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f8fafc;color:#0f172a;">
+  <div style="max-width:560px;margin:48px auto;padding:28px;background:#fff;border:1px solid #e2e8f0;border-radius:16px;">
+    <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Bright CRM · Blog-2.0</div>
+    <h1 style="margin:10px 0 8px;font-size:28px;">${escapeHtml(headline)}</h1>
+    <p style="margin:0 0 18px;font-size:16px;line-height:1.6;">${escapeHtml(detail)}</p>
+    <form method="post" action="${escapeHtml(postUrl || "")}">
+      <input type="hidden" name="token" value="${escapeHtml(token)}" />
+      <button type="submit" style="background:${turningOff ? "#b45309" : "#15803d"};color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:700;font-size:15px;cursor:pointer;">
+        ${turningOff ? "Turn automations off" : "Turn automations on"}
+      </button>
+    </form>
+  </div>
+</body>
+</html>`;
+}
+
+export function renderBlog20AutomationSwitchDonePage({ enabled, otherUrl }) {
+  const on = Boolean(enabled);
+  const headline = on ? "Automations are on" : "Automations are off";
+  const detail = on
+    ? "New Bright CRM blogs will be emailed on the usual schedule."
+    : "No new Bright CRM blog emails until you turn automations back on. Use the button below, or the same link in your approval email.";
+  const otherLabel = on ? "Turn automations off" : "Turn automations on";
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(headline)}</title>
+</head>
+<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f8fafc;color:#0f172a;">
+  <div style="max-width:560px;margin:48px auto;padding:28px;background:#fff;border:1px solid #e2e8f0;border-radius:16px;">
+    <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Bright CRM · Blog-2.0</div>
+    <h1 style="margin:10px 0 8px;font-size:28px;color:${on ? "#15803d" : "#b45309"};">${escapeHtml(headline)}</h1>
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.6;">${escapeHtml(detail)}</p>
+    ${
+      otherUrl
+        ? `<p style="margin:0;"><a href="${escapeHtml(otherUrl)}" style="display:inline-block;background:#0c4a6e;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">${escapeHtml(otherLabel)}</a></p>`
+        : ""
+    }
+  </div>
+</body>
+</html>`;
+}
+
+export function buildBlog20AutomationSwitchNoticeEmail({ enabled, otherUrl }) {
+  const on = Boolean(enabled);
+  const headline = on ? "Automations are on" : "Automations are off";
+  const detail = on
+    ? "New Bright CRM blogs will be emailed on the usual schedule."
+    : "No new Bright CRM blog emails until you turn automations back on.";
+  const otherLabel = on ? "Turn automations off" : "Turn automations on";
+  return {
+    subject: on
+      ? "[Automations on] Bright CRM blog emails will continue"
+      : "[Automations off] Bright CRM blog emails paused",
+    html: `<!DOCTYPE html>
+<html>
+<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f8fafc;color:#0f172a;">
+  <div style="max-width:560px;margin:24px auto;padding:28px;background:#fff;border:1px solid #e2e8f0;border-radius:16px;">
+    <h1 style="margin:0 0 8px;font-size:24px;">${escapeHtml(headline)}</h1>
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.6;">${escapeHtml(detail)}</p>
+    ${
+      otherUrl
+        ? `<p style="margin:0;"><a href="${escapeHtml(otherUrl)}" style="display:inline-block;background:#0c4a6e;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">${escapeHtml(otherLabel)}</a></p>`
+        : ""
+    }
+  </div>
+</body>
+</html>`,
+  };
+}
+
 export function buildBlog20DecisionUrls(approvalId, expiresAt) {
   const base = getPublicApiBase();
   if (!base) {
@@ -226,6 +368,7 @@ export function buildBlog20ApprovalRequestEmail({
       previewUrl,
       allowDirectPublish,
     })}
+    ${automationSwitchBlock()}
   `;
 
   return {

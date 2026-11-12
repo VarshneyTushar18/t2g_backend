@@ -47,6 +47,7 @@ router.use(requireBlogDb);
 
 // Public approval links (no admin auth)
 router.get("/approvals/go", controller.goApproval);
+router.post("/approvals/go", controller.goApproval);
 router.get("/approvals/revise", controller.showRevisionFormHandler);
 router.post("/approvals/revise", controller.submitRevisionHandler);
 
