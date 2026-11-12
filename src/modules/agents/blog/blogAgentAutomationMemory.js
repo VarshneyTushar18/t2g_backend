@@ -9,7 +9,7 @@ Always follow on every automated create_blog_post:
 2. SLUG — Derive URL slug from the final title (lowercase, hyphens, no special chars). Pass slug explicitly in create_blog_post.
 3. CATEGORIES — When topic includes category IDs, pass categoryIds exactly. Do not skip categories.
 4. SEO — Always set metaTitle (~60 chars), metaDescription (~155 chars), focusKeyword, and slug aligned with the title.
-5. IMAGES — Set featured_image from pick_blog_image when needed. Use descriptive alt text tied to the article title (not generic "Blog image").
+5. IMAGES — Set featured_image from pick_blog_image when needed. Alt and title must be the article title. Do not put stock-photo captions or figcaptions in the body.
 6. CONTENT — Full article in create_blog_post; approval preview must show complete HTML body.
 7. OUTPUT — After create, response must include: id: {number} and https://www.tech2globe.com/blogs/{slug}
 

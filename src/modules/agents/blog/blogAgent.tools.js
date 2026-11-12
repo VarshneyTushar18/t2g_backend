@@ -249,7 +249,7 @@ export function createBlogAgentTools({
         const stockPick = pickStockImage(topicHint);
         const cover = params.featured_image || stockPick.url;
         const featuredAlt = String(
-          params.focusKeyword || params.title || stockPick.alt || "Tech2Globe blog",
+          params.title || params.focusKeyword || "Tech2Globe blog",
         )
           .trim()
           .slice(0, 125);
@@ -257,9 +257,9 @@ export function createBlogAgentTools({
           .trim()
           .slice(0, 255);
         if (params.inline_image_urls && params.inline_image_urls.length) {
-          html = injectInlineImagesFromUrls(html, params.inline_image_urls);
+          html = injectInlineImagesFromUrls(html, params.inline_image_urls, params.title);
         } else if (params.add_inline_images !== false) {
-          html = injectInlineImages(html, topicHint);
+          html = injectInlineImages(html, topicHint, params.title);
         }
 
         const metaTitle = (params.metaTitle || params.title).slice(0, 60);
@@ -524,7 +524,7 @@ export function createBlogAgentTools({
 
         const hint = topic || post.title || post.slug;
         const cover = featured_image || pickStockImage(hint).url;
-        const content = injectInlineImages(post.content || "", hint);
+        const content = injectInlineImages(post.content || "", hint, post.title);
 
         const updated = await blogModel.updatePost(post.id, {
           title: post.title,

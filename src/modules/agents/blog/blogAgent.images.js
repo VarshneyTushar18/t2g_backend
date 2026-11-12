@@ -88,21 +88,31 @@ export function pickInlineImages(query, count = 2) {
   return unique;
 }
 
-export function figureHtml({ url, alt }) {
-  const safeAlt = String(alt || "Blog image")
-    .replace(/</g, "")
-    .slice(0, 120);
-  return `<figure class="blog-agent-image"><img src="${url}" alt="${safeAlt}" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;" /><figcaption>${safeAlt}</figcaption></figure>`;
+function attrText(value, fallback) {
+  return String(value || fallback || "Tech2Globe blog")
+    .replace(/[<>"']/g, "")
+    .trim()
+    .slice(0, 125);
+}
+
+export function figureHtml({ url, alt, title }) {
+  const safeAlt = attrText(alt, title);
+  const safeTitle = attrText(title, safeAlt);
+  return `<figure class="blog-agent-image"><img src="${url}" alt="${safeAlt}" title="${safeTitle}" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;" /></figure>`;
 }
 
 /** Insert 1–2 figures after the first paragraph if content has no <img>. */
-export function injectInlineImages(html, query) {
+export function injectInlineImages(html, query, articleTitle = "") {
   const text = String(html || "");
   if (/<img[\s>]/i.test(text)) return text;
   const images = pickInlineImages(query, 2);
   if (!images.length) return text;
-  const first = figureHtml(images[0]);
-  const second = images[1] ? figureHtml(images[1]) : "";
+  const label = attrText(articleTitle, query);
+  const first = figureHtml({ url: images[0].url, alt: label, title: label });
+  const secondLabel = attrText(`${label} detail`, label);
+  const second = images[1]
+    ? figureHtml({ url: images[1].url, alt: secondLabel, title: secondLabel })
+    : "";
   const closeP = text.indexOf("</p>");
   if (closeP === -1) {
     return first + text + second;
@@ -117,7 +127,7 @@ export function injectInlineImages(html, query) {
 }
 
 /** Insert 1–2 images after the first paragraph if content has no <img>. */
-export function injectInlineImagesFromUrls(html, urls) {
+export function injectInlineImagesFromUrls(html, urls, articleTitle = "") {
   const text = String(html || "");
   if (/<img[\s>]/i.test(text)) return text;
   const list = Array.isArray(urls)
@@ -125,8 +135,15 @@ export function injectInlineImagesFromUrls(html, urls) {
     : [];
   if (!list.length) return text;
 
-  const first = figureHtml({ url: list[0], alt: "Blog image" });
-  const second = list[1] ? figureHtml({ url: list[1], alt: "Blog image" }) : "";
+  const label = attrText(articleTitle, "Tech2Globe blog");
+  const first = figureHtml({ url: list[0], alt: label, title: label });
+  const second = list[1]
+    ? figureHtml({
+        url: list[1],
+        alt: attrText(`${label} detail`, label),
+        title: attrText(`${label} detail`, label),
+      })
+    : "";
 
   const closeP = text.indexOf("</p>");
   if (closeP === -1) {
