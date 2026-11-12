@@ -70,7 +70,7 @@ Log in in the browser → wait until **Step 7/7 Session saved**.
 ```bat
 scp -i "%USERPROFILE%\.ssh\listing_auditor_ed25519" ^
   "D:\important files\Tech2globe\tech2globe-backend\storage\blog-2.0\mailerlite-session.json" ^
-  root@129.121.135.248:/root/t2g_backend/storage/blog-2.0/
+  root@103.174.102.70:/root/t2g_backend/storage/blog-2.0/
 ```
 
 **On server:** `pm2 restart t2g-backend`
@@ -194,11 +194,19 @@ Newsletter blast emails (Monday 12:00 IST campaign) are **Phase 2** — API toke
 
 ## 11. Production deploy (reference)
 
-**Server:** `129.121.135.248` — backend `/root/t2g_backend`, admin `/root/t2g_admin`
+**Server:** `103.174.102.70` — backend `/root/t2g_backend`, admin `/root/t2g_admin`
 
 ```bash
 # Backend (branch authFix)
-cd /root/t2g_backend && git pull origin authFix && pm2 restart t2g-backend
+cd /root/t2g_backend && git pull origin authFix && npm install && pm2 restart t2g-backend
+
+# Playwright browsers (required once per server / after playwright upgrade)
+cd /root/t2g_backend && npx playwright install chromium
+
+# AlmaLinux 8 — OS libs (`libnspr4.so` etc.; `playwright install-deps` needs apt)
+dnf install -y nspr nss nss-util nss-softokn-freebl atk at-spi2-atk at-spi2-core \
+  cups-libs libdrm libX11 libXcomposite libXdamage libXext libXfixes libXrandr \
+  libxcb libXScrnSaver mesa-libgbm pango cairo alsa-lib libxkbcommon gtk3 liberation-fonts
 
 # Admin (branch main)
 cd /root/t2g_admin && git pull origin main && npm run build && pm2 restart t2g-admin
@@ -211,6 +219,8 @@ cd /root/t2g_admin && git pull origin main && npm run build && pm2 restart t2g-a
 | Symptom | Likely cause | Action |
 |---------|--------------|--------|
 | **504** on push | Old proxy waited for whole bot run | Deploy backend **202 async** + admin latest; ignore 504 if bot still running |
+| **Executable doesn't exist** (`chrome-headless-shell`) | Playwright browsers not on VPS | `cd /root/t2g_backend && npx playwright install chromium` → restart backend |
+| **libnspr4.so: cannot open shared object** | Chromium OS libs missing (Alma/RHEL) | See **§11** `dnf install` list → restart backend |
 | **OTP every push** | Missing/expired `mailerlite-session.json` on VPS | Re-run save-session on PC → scp JSON → restart backend |
 | **OTP submitted, nothing happens** | Bot not running or wrong code | Push again; submit while progress bar active; check bot inbox |
 | **Draft stuck “Pushing…”** | Bot killed / DB out of sync | **Stop bot** → Retry; or deploy reconcile (`getMailerLiteBot/status`) |
