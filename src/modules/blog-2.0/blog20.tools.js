@@ -50,14 +50,10 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
       const blogBase = settings.client_blog_url || settings.client_site_url || "";
       let botPush = null;
       let approval = null;
+      const hasApprovers = (settings.approval_emails || []).length > 0;
 
-      if (settings.mailerlite_bot_enabled && settings.mailerlite_bot_auto_push) {
-        try {
-          botPush = await pushDraftToMailerLite(draft.id);
-        } catch (err) {
-          botPush = { ok: false, error: err.message };
-        }
-      } else if ((settings.approval_emails || []).length > 0) {
+      // Manager approval email wins — auto-push only when no approvers are configured.
+      if (hasApprovers) {
         try {
           approval = await requestBlog20DraftApproval({
             draft,
@@ -67,6 +63,12 @@ export function createBlog20AgentTools({ userId, threadId, humanizePercent = 70 
           });
         } catch (err) {
           approval = { ok: false, error: err.message };
+        }
+      } else if (settings.mailerlite_bot_enabled && settings.mailerlite_bot_auto_push) {
+        try {
+          botPush = await pushDraftToMailerLite(draft.id);
+        } catch (err) {
+          botPush = { ok: false, error: err.message };
         }
       }
 
