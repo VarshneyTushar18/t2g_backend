@@ -79,6 +79,20 @@ async function ensureAutoTrendingColumns() {
       console.error("[agent-automations] column research_report failed:", err.message);
     }
   }
+
+  if (
+    (await tableExists("agent_automations_topics")) &&
+    !(await columnExists("agent_automations_topics", "source_niche"))
+  ) {
+    try {
+      await blogDb.query(
+        "ALTER TABLE agent_automations_topics ADD COLUMN source_niche TEXT NULL",
+      );
+      console.log("[agent-automations] added column source_niche");
+    } catch (err) {
+      console.error("[agent-automations] column source_niche failed:", err.message);
+    }
+  }
 }
 
 export async function ensureAgentAutomationsTables() {

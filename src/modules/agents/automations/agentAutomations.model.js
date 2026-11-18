@@ -96,6 +96,7 @@ function mapTopic(row) {
     last_processed_at: row.last_processed_at || null,
     research_report: parseJsonObject(row.research_report),
     created_by: row.created_by || null,
+    source_niche: row.source_niche || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -191,8 +192,8 @@ export async function listTopics({ status = "", includeInactive = false } = {}) 
 export async function createTopic(payload) {
   const [result] = await blogDb.query(
     `INSERT INTO agent_automations_topics
-      (topic, notes, author_name, category_ids, tags, priority, scheduled_for, status, is_active, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 1, ?)`,
+      (topic, notes, author_name, category_ids, tags, priority, scheduled_for, status, is_active, created_by, source_niche)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 1, ?, ?)`,
     [
       payload.topic,
       payload.notes || null,
@@ -202,6 +203,7 @@ export async function createTopic(payload) {
       Number(payload.priority || 0),
       payload.scheduled_for || null,
       payload.created_by || null,
+      payload.source_niche || null,
     ],
   );
   return getTopicById(result.insertId);

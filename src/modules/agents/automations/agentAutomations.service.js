@@ -250,6 +250,7 @@ async function ensureTopicsForRun(settings) {
       tags: pick.tags?.length ? pick.tags : settings.auto_default_tags || [],
       priority: 10,
       created_by: "auto-trending",
+      source_niche: settings.auto_niche || null,
     });
     created.push(topic);
   }
