@@ -7,6 +7,7 @@ export const ADMIN_MODULES = [
   "testimonials",
   "case_studies",
   "blog",
+  "blog_2_0",
 ];
 
 export const SUPER_ADMIN_ROLE = "super_admin";
@@ -15,4 +16,6 @@ export const SUPER_ADMIN_ROLE = "super_admin";
 export const ROLE_MODULES = {
   hr: ["career"],
   digital_marketing: ["portfolio", "testimonials", "case_studies", "blog"],
+  /** Bright CRM / MailerLite project — assign to Sahil sir only */
+  blog_2_0_project: ["blog_2_0"],
 };

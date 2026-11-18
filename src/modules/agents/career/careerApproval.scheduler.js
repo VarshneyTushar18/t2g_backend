@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { runApprovalReminderTick } from "./careerApproval.service.js";
+import { runCareerAutomationTick } from "./careerAutomations.service.js";
 import { ensureCareerApprovalTables } from "./careerApproval.model.js";
 
 const ENABLED =
@@ -14,6 +15,14 @@ async function guardedRun() {
     }
   } catch (err) {
     console.error("[career-approval] reminder tick failed:", err?.message || err);
+  }
+  try {
+    const sched = await runCareerAutomationTick();
+    if (sched.ran && sched.sent) {
+      console.log(`[career-schedule] gate email cycle=${sched.cycleId}`);
+    }
+  } catch (err) {
+    console.error("[career-schedule] tick failed:", err?.message || err);
   }
 }
 

@@ -94,9 +94,39 @@ export const getDashboardStats = async () => {
   return { total_jobs, total_apps, pending, shortlisted, hired, rejected, recent, jobStats };
 };
 
+export const REAPPLY_COOLDOWN_DAYS = 90;
+
+/**
+ * Recent application for same email + job within cooldown window.
+ * @returns {Promise<{ id: string, applied_at: Date, days_remaining: number } | null>}
+ */
+export const findRecentApplication = async (
+  email,
+  jobId,
+  withinDays = REAPPLY_COOLDOWN_DAYS,
+) => {
+  const days = Math.max(1, parseInt(withinDays, 10) || REAPPLY_COOLDOWN_DAYS);
+  const [rows] = await pool.query(
+    `SELECT id, applied_at,
+            GREATEST(
+              0,
+              DATEDIFF(DATE_ADD(applied_at, INTERVAL ? DAY), CURDATE())
+            ) AS days_remaining
+     FROM job_applications
+     WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
+       AND job_id = ?
+       AND applied_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+     ORDER BY applied_at DESC
+     LIMIT 1`,
+    [days, email, jobId, days],
+  );
+  return rows[0] || null;
+};
+
+/** True if candidate cannot apply again yet (within cooldown). */
 export const checkDuplicate = async (email, jobId) => {
-  const [rows] = await pool.query(`SELECT id FROM job_applications WHERE email = ? AND job_id = ?`, [email, jobId]);
-  return rows.length > 0;
+  const recent = await findRecentApplication(email, jobId);
+  return Boolean(recent);
 };
 
 export const createApplication = async (fields, resumeFilename) => {

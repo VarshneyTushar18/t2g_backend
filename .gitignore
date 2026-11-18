@@ -1,3 +1,6 @@
 node_modules/
 .env
-echo "uploads/resumes/" >> .gitignore"uploads/resumes/" 
+uploads/resumes/
+uploads/blog20-bot-debug/
+storage/blog-2.0/browser-profile/
+storage/blog-2.0/mailerlite-session.json

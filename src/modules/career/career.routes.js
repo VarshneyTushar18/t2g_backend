@@ -1,6 +1,7 @@
 import express from "express";
 import * as CareerController from "./career.controller.js";
 import * as ApprovalController from "../agents/career/careerApproval.controller.js";
+import careerAutomationsRoutes from "../agents/career/careerAutomations.routes.js";
 import { guardModuleOrApiKey } from "../auth/auth.middleware.js";
 import { handleResumeUpload } from "./career.upload.js";
 
@@ -9,10 +10,12 @@ const router = express.Router();
 
 // PUBLIC — HR Yes/No links from email (no auth)
 router.get("/approvals/go", ApprovalController.go);
+router.post("/approvals/go", ApprovalController.go);
 
 // PUBLIC
 router.get("/jobs", CareerController.getActiveJobs);
 router.get("/jobs/:id", CareerController.getJobById);
+router.get("/check-application", CareerController.checkApplication);
 
 router.post(
   "/apply",
@@ -36,6 +39,13 @@ router.get("/admin/approvals", ...adminCareer, ApprovalController.getDashboard);
 router.get("/admin/approvals/settings", ...adminCareer, ApprovalController.getSettings);
 router.put("/admin/approvals/settings", ...adminCareer, ApprovalController.saveSettings);
 router.post("/admin/approvals/test-email", ...adminCareer, ApprovalController.testEmail);
+router.post(
+  "/admin/approvals/test-schedule-email",
+  ...adminCareer,
+  ApprovalController.testScheduleEmail,
+);
 router.post("/admin/approvals/:jobId/resend", ...adminCareer, ApprovalController.resend);
+
+router.use("/admin/automations", careerAutomationsRoutes);
 
 export default router;

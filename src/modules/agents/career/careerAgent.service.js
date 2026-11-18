@@ -59,6 +59,54 @@ Behavior:
   return parts.join("\n");
 }
 
+function parseToolOutput(raw) {
+  let output = raw;
+  if (output == null) return null;
+  if (typeof output === "string") {
+    try {
+      output = JSON.parse(output);
+    } catch {
+      return null;
+    }
+  }
+  if (output?.text && typeof output.text === "string") {
+    try {
+      output = JSON.parse(output.text);
+    } catch {
+      /* keep */
+    }
+  }
+  return output;
+}
+
+function extractToolJobs(result) {
+  const jobs = [];
+  const seen = new Set();
+  const items = [
+    ...(Array.isArray(result?.newItems) ? result.newItems : []),
+    ...(Array.isArray(result?.items) ? result.items : []),
+  ];
+  for (const item of items) {
+    const type = item?.type || item?.rawItem?.type;
+    if (
+      type &&
+      type !== "tool_call_output_item" &&
+      type !== "function_call_result" &&
+      type !== "tool_result"
+    ) {
+      continue;
+    }
+    const output = parseToolOutput(
+      item?.output ?? item?.rawItem?.output ?? item?.result,
+    );
+    if (output?.ok && output?.id && !seen.has(output.id)) {
+      seen.add(output.id);
+      jobs.push(output);
+    }
+  }
+  return jobs;
+}
+
 function buildRunInput(history, userMessage) {
   const lines = [];
   for (const msg of history) {
@@ -117,7 +165,12 @@ export async function runCareerAgent({ user, threadId, message }) {
   });
 
   const result = await run(agent, buildRunInput(history, message));
-  return { output: result.finalOutput || "Done." };
+  const jobs = extractToolJobs(result);
+  return {
+    output: result.finalOutput || "Done.",
+    jobs,
+    job: jobs[0] || null,
+  };
 }
 
 export async function sendMessage({ user, threadId, message }) {
@@ -173,4 +226,63 @@ export async function sendMessage({ user, threadId, message }) {
     assistant,
     durationMs: Date.now() - started,
   };
+}
+
+/** Cron / scheduled gate: draft one job without admin chat. */
+export async function runScheduledJobDraft({
+  prompt,
+  requesterEmail = "career-scheduler@tech2globe.com",
+}) {
+  const user = {
+    role: "admin",
+    email: requesterEmail,
+    sub: "career-scheduler",
+    id: "career-scheduler",
+    permissions: { career: { view: true, add: true, edit: true, delete: true } },
+  };
+
+  const thread = await model.createThread({
+    userId: user.sub,
+    userEmail: user.email,
+    title: "Scheduled job draft",
+    agentType: "career",
+  });
+
+  const trimmed = String(prompt || "").trim();
+  if (!trimmed) {
+    throw new Error("schedule_agent_prompt is empty");
+  }
+
+  await model.addMessage({ threadId: thread.id, role: "user", content: trimmed });
+  const result = await runCareerAgent({ user, threadId: thread.id, message: trimmed });
+  await model.addMessage({
+    threadId: thread.id,
+    role: "assistant",
+    content: result.output,
+    toolOutput: { scheduled: true, job: result.job || null },
+  });
+
+  if (!result.job?.id) {
+    const err = new Error(
+      `Career Agent did not create a job (no create_job_post). Check AI keys and blog DB. Agent: ${String(result.output || "").slice(0, 280)}`,
+    );
+    err.status = 502;
+    throw err;
+  }
+
+  if (result.job.approval_error) {
+    const err = new Error(`Job #${result.job.id} created but HR email failed: ${result.job.approval_error}`);
+    err.status = 503;
+    throw err;
+  }
+
+  if (result.job.hr_notified === false && !result.job.approval_skipped) {
+    const err = new Error(
+      `Job #${result.job.id} created but HR was not emailed (${result.job.approval_skip_reason || "check Job Approvals settings and BACKEND_PUBLIC_URL"}).`,
+    );
+    err.status = 503;
+    throw err;
+  }
+
+  return { threadId: thread.id, output: result.output, job: result.job };
 }
