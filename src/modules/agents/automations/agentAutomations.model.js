@@ -1,5 +1,8 @@
 import blogDb from "../../../config/blogDb.js";
 
+/** Max gap between posts in one run (7 days). Stored as seconds in DB. */
+export const MAX_POSTS_STAGGER_SECONDS = 168 * 3600;
+
 const DEFAULT_SETTINGS = {
   enabled: false,
   timezone: "Asia/Kolkata",
@@ -59,9 +62,19 @@ function mapSettings(row) {
     ),
     posts_stagger_seconds: Math.min(
       Math.max(Number(row.posts_stagger_seconds ?? 120), 0),
-      900,
+      MAX_POSTS_STAGGER_SECONDS,
     ),
   };
+}
+
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 function mapTopic(row) {
@@ -81,6 +94,7 @@ function mapTopic(row) {
     error_message: row.error_message || null,
     is_active: Boolean(row.is_active),
     last_processed_at: row.last_processed_at || null,
+    research_report: parseJsonObject(row.research_report),
     created_by: row.created_by || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -140,7 +154,10 @@ export async function upsertSettings(payload) {
       next.auto_default_author_name || DEFAULT_SETTINGS.auto_default_author_name,
       JSON.stringify(next.auto_default_category_ids || []),
       JSON.stringify(next.auto_default_tags || []),
-      Math.min(Math.max(Number(next.posts_stagger_seconds ?? 120), 0), 900),
+      Math.min(
+        Math.max(Number(next.posts_stagger_seconds ?? 120), 0),
+        MAX_POSTS_STAGGER_SECONDS,
+      ),
     ],
   );
 
@@ -292,6 +309,13 @@ export async function markTopicDone(id, result) {
   );
 }
 
+export async function saveTopicReport(id, report) {
+  await blogDb.query(
+    "UPDATE agent_automations_topics SET research_report = ? WHERE id = ?",
+    [report ? JSON.stringify(report) : null, Number(id)],
+  );
+}
+
 export async function markTopicFailed(id, errorMessage) {
   await blogDb.query(
     `UPDATE agent_automations_topics
@@ -327,7 +351,8 @@ export async function requeueTopic(id) {
          error_message = NULL,
          generated_post_id = NULL,
          generated_slug = NULL,
-         generated_title = NULL
+         generated_title = NULL,
+         research_report = NULL
      WHERE id = ?`,
     [Number(id)],
   );

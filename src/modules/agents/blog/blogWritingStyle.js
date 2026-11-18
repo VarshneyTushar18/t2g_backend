@@ -57,7 +57,7 @@ Structure (the ${ai}% AI-assisted part):
   5) Bullet or numbered lists only when they truly help
   6) Bold sparingly for key phrases only
   7) Practical ending (next step / what to ask vendors) — no "In conclusion"
-- Length: ~700–1200 words unless user asks otherwise.
+- Length: 1000–2000 words unless user asks otherwise.
 - SEO: focus keyword in title + first paragraph + one H2; meta description 120–160 chars — weave naturally, never keyword-stuff.
 
 A second automatic humanize rewrite may run before save when humanize % is high — still write the first draft as human as possible.`;

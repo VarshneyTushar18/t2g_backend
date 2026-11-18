@@ -8,6 +8,7 @@ import {
 } from "./blogAgent.images.js";
 import { generateAndUploadBlogImage } from "../blog-image/blogImage.generate.js";
 import { humanizeBlogHtml } from "./blogAgent.humanize.js";
+import { addInternalLinks } from "./blogInternalLinks.js";
 
 function slugify(title) {
   return String(title || "post")
@@ -261,6 +262,7 @@ export function createBlogAgentTools({
         } else if (params.add_inline_images !== false) {
           html = injectInlineImages(html, topicHint, params.title);
         }
+        html = addInternalLinks(html);
 
         const metaTitle = (params.metaTitle || params.title).slice(0, 60);
         const metaDescription = (
@@ -365,6 +367,7 @@ export function createBlogAgentTools({
             humanizePercent,
             title: params.title || existing.title,
           });
+          content = addInternalLinks(content);
         }
 
         const seo = {

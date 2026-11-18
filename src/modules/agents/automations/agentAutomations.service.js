@@ -9,6 +9,8 @@ import {
 } from "./blogApproval.service.js";
 import { DEFAULT_BLOG_AUTOMATION_MEMORY } from "../blog/blogAgentAutomationMemory.js";
 import { discoverTrendingTopics } from "./trendingTopicDiscovery.js";
+import { researchTopic, briefToWriterInstructions } from "./seoResearchAgent.js";
+import { buildSeoReport } from "./seoReport.js";
 import {
   shouldRunNow as checkScheduleDue,
   describeScheduleStatus,
@@ -52,12 +54,16 @@ async function recoverStaleProcessingTopics() {
   }
 }
 
-function buildPrompt(topic, status) {
+function buildPrompt(topic, status, brief = null) {
   const tags = (topic.tags || []).join(", ");
   const categoryIds = (topic.category_ids || []).map(Number).filter(Boolean);
   const author = topic.author_name || "Tech2Globe Digital Team";
   return [
     `Create a complete SEO blog post on topic: "${topic.topic}"`,
+    brief ? briefToWriterInstructions(brief) : "",
+    brief?.primary_keyword
+      ? `Use "${brief.primary_keyword}" as focusKeyword, in the title, slug, meta description and first 150 words.`
+      : "",
     `Set status to ${status}.`,
     `Author name: ${author}.`,
     tags ? `Use tags: ${tags}.` : "",
@@ -68,7 +74,7 @@ function buildPrompt(topic, status) {
     "IMPORTANT: Skip clarifying questions. Just write it now — do not ask the user anything.",
     "Slug: derive from final title (lowercase, hyphens). Pass slug, metaTitle, metaDescription, focusKeyword in create_blog_post.",
     "Featured image: leave featured_image empty in create_blog_post — the tool auto-picks stock cover. Do NOT call pick_blog_image unless create failed without image.",
-    "Use add_inline_images: true. One create_blog_post call with full HTML/Markdown body (~900–1200 words).",
+    "Use add_inline_images: true. One create_blog_post call with full HTML/Markdown body (1000–2000 words; never under 1000).",
     "Mandatory: call create_blog_post once, then reply with id: {number} and url: https://www.tech2globe.com/blogs/{slug}.",
     "Follow the admin content mix setting from system instructions (humanize % vs AI %). Clear H2s, short paragraphs, no raw markdown asterisks.",
     DEFAULT_BLOG_AUTOMATION_MEMORY,
@@ -122,7 +128,20 @@ async function processTopic(topic, settings) {
   else if (settings.mode === "draft_only") desiredStatus = "draft";
   else desiredStatus = "pending";
 
-  const prompt = buildPrompt(topic, desiredStatus);
+  let brief = null;
+  let researchError = null;
+  try {
+    brief = await researchTopic({
+      topic: topic.topic,
+      niche: settings.auto_niche,
+      notes: topic.notes,
+    });
+  } catch (err) {
+    researchError = err.message || "Research failed";
+    console.warn(`[agent-automations] research failed for topic #${topic.id}: ${researchError}`);
+  }
+
+  const prompt = buildPrompt(topic, desiredStatus, brief);
 
   const user = {
     id: "agent-automations",
@@ -175,6 +194,9 @@ async function processTopic(topic, settings) {
     generated_slug: post.slug,
     generated_title: post.title,
   });
+  await automationModel
+    .saveTopicReport(topic.id, buildSeoReport({ brief, post, researchError }))
+    .catch((err) => console.warn(`[agent-automations] report save failed: ${err.message}`));
 
   let approval = null;
   if (settings.mode === "pending_email") {
@@ -241,14 +263,14 @@ async function ensureTopicsForRun(settings) {
 async function processTopicBatch(settings, dueTopics) {
   const staggerSec = Math.min(
     Math.max(Number(settings.posts_stagger_seconds || 120), 0),
-    900,
+    automationModel.MAX_POSTS_STAGGER_SECONDS,
   );
   const results = [];
   for (let i = 0; i < dueTopics.length; i += 1) {
     const topic = dueTopics[i];
     if (i > 0 && staggerSec > 0) {
       console.log(
-        `[agent-automations] stagger ${staggerSec}s before topic #${topic.id}`,
+        `[agent-automations] stagger ${Math.round(staggerSec / 3600)}h (${staggerSec}s) before topic #${topic.id}`,
       );
       await sleep(staggerSec * 1000);
     }

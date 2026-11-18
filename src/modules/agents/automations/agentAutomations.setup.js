@@ -65,6 +65,20 @@ async function ensureAutoTrendingColumns() {
       console.error(`[agent-automations] column ${col} failed:`, err.message);
     }
   }
+
+  if (
+    (await tableExists("agent_automations_topics")) &&
+    !(await columnExists("agent_automations_topics", "research_report"))
+  ) {
+    try {
+      await blogDb.query(
+        "ALTER TABLE agent_automations_topics ADD COLUMN research_report LONGTEXT NULL",
+      );
+      console.log("[agent-automations] added column research_report");
+    } catch (err) {
+      console.error("[agent-automations] column research_report failed:", err.message);
+    }
+  }
 }
 
 export async function ensureAgentAutomationsTables() {

@@ -81,7 +81,7 @@ export async function humanizeBlogHtml(html, opts = {}) {
     const completion = await client.chat.completions.create({
       model,
       temperature: temp,
-      max_tokens: 4500,
+      max_tokens: 8000,
       messages: [
         { role: "system", content: buildHumanizeSystemPrompt(humanizePercent) },
         {

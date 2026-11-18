@@ -16,7 +16,7 @@ function stripHtml(s) {
     .trim();
 }
 
-async function fetchGoogleNewsHeadlines(query, limit = 12) {
+export async function fetchGoogleNewsHeadlines(query, limit = 12) {
   const q = encodeURIComponent(query.slice(0, 200));
   const url = `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`;
   const res = await fetch(url, {

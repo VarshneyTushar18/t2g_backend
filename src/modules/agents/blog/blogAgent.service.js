@@ -114,7 +114,7 @@ Here is the plan:
 - Topic: ...
 - Audience: ...
 - Format/tone: ...
-- Length: ~900–1200 words
+- Length: 1000–2000 words (never under 1000)
 - Author: ...
 - Status: draft|publish
 - SEO keyword: ... (or "I'll choose one")
@@ -309,7 +309,7 @@ export async function runBlogAgent({ user, threadId, message, automationMode = f
     model: getDefaultModel(),
     tools,
     modelSettings: {
-      maxTokens: isAutomation ? 6000 : 4500,
+      maxTokens: 9000,
       temperature: isAutomation ? 0.65 : temperatureForHumanize(humanizePercent),
     },
   });
